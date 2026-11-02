@@ -1,4 +1,5 @@
 import AppKit
+import DoggyCore
 import Foundation
 
 let usage = """
@@ -65,7 +66,7 @@ func cmdRun(_ args: [String]) {
     let once = args.contains("--once")
     let interval = flag(args, "--interval").flatMap(Double.init) ?? 3.0
 
-    let cfg = AgentConfig.load()
+    let cfg = AgentConfig.load().flatMap { $0.isSignedIn ? $0 : nil }
     if !dryRun && cfg == nil { fail("not logged in; run: doggy-agent login --server URL --email E --password P") }
 
     if !checkAccessibility(prompt: true) {
