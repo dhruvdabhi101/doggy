@@ -102,7 +102,7 @@ Rules:
 - evidence: a short verbatim quote from the source that supports the item. Never invent evidence.
 - confidence: 0-1, how sure you are this is a real, current item for this user.
 - source: the id of the source the evidence is quoted from.
-- Do not repeat anything already in the existing open items list. If the source shows an existing open item is now done (sent, completed, cancelled), add it to closes with a quote.
+- Do not repeat anything already in the existing open items list or the recently completed list. If the source shows an existing open item is now done (sent, completed, cancelled), add it to closes with a quote.
 - Return empty arrays when there is nothing worth keeping (that is the common case for screen text).`;
 
 export type ExtractSource = { app: string | null; window: string | null; url: string | null; text: string };
@@ -114,6 +114,7 @@ export type ExtractInput = {
   userEmail: string;
   tz: string;
   existing: Item[];
+  recentlyDone: Item[];
 };
 
 export async function extract(input: ExtractInput): Promise<{ result: Extraction; usage: Usage }> {
@@ -135,6 +136,7 @@ export async function extract(input: ExtractInput): Promise<{ result: Extraction
   const existing = input.existing.length
     ? input.existing.map((i) => `- [${i.id}] (${i.type}) ${i.title}${i.dueAt ? ` due ${i.dueAt}` : ""}`).join("\n")
     : "(none)";
+  const done = input.recentlyDone.length ? input.recentlyDone.map((i) => `- ${i.title}`).join("\n") : "(none)";
 
   const model = input.kind === "capture" ? MODEL_FAST : MODEL;
   const res = await client.beta.messages.create({
@@ -149,7 +151,7 @@ export async function extract(input: ExtractInput): Promise<{ result: Extraction
     system: EXTRACT_SYSTEM,
     messages: [{
       role: "user",
-      content: `${header}\n\nExisting open items:\n${existing}\n\n${body}`,
+      content: `${header}\n\nExisting open items:\n${existing}\n\nRecently completed (do not recreate):\n${done}\n\n${body}`,
     }],
   } as any);
 

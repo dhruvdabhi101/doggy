@@ -1,4 +1,6 @@
-import { db, insertItem, itemKeyTaken, openItems, updateItem, searchItems, type Item } from "./db";
+import {
+  db, insertItem, itemKeyTaken, nearDuplicate, openItems, recentlyDoneItems, updateItem, searchItems, type Item,
+} from "./db";
 import { extract, type ExtractInput, type ExtractSource } from "./llm";
 import { type Source, type SourceKind } from "./sources";
 import { laneFor, recordSourceStats } from "./lanes";
@@ -19,13 +21,17 @@ export async function processSources(user: UserCtx, kind: ExtractInput["kind"], 
   const existing = [...new Map([...openItems(user.id, 25), ...related].map((i) => [i.id, i])).values()];
   const sources: ExtractSource[] = inputs.map((s) => ({ app: s.app ?? null, window: s.window ?? null, url: s.url ?? null, text: s.text }));
 
-  const { result: out, usage } = await extract({ kind, sources, userName: user.name, userEmail: user.email, tz: user.tz, existing });
+  const { result: out, usage } = await extract({
+    kind, sources, userName: user.name, userEmail: user.email, tz: user.tz, existing, recentlyDone: recentlyDoneItems(user.id),
+  });
   recordUsage(user.id, kind, usage);
 
   const created: Item[][] = inputs.map(() => []);
   for (const it of out.items) {
     if (it.confidence < MIN_CONFIDENCE[kind]) continue;
     if (itemKeyTaken(user.id, it.title, it.evidence)) continue;
+    // Typed and spoken notes are explicit requests, so only screen text gets the fuzzy guard.
+    if (kind === "capture" && nearDuplicate(user.id, it.title)) continue;
     const src = inputs[it.source]!;
     created[it.source]!.push(insertItem(user.id, {
       type: it.type, title: it.title, details: it.details, owner: it.owner, counterparty: it.counterparty,

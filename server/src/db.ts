@@ -216,9 +216,11 @@ const STOP = new Set(
   "the a an and or of to in on for with what when where who why how did do does i me my we our you your is are was were be been it this that at by from about any have has had should can could will would tell show".split(" "),
 );
 
+const contentWords = (s: string) => (s.toLowerCase().match(/[\p{L}\p{N}]{2,}/gu) ?? []).filter((w) => !STOP.has(w));
+
 /** Turn free text into a safe FTS5 OR-query of prefix terms. */
 export function ftsQuery(q: string): string | null {
-  const words = (q.toLowerCase().match(/[\p{L}\p{N}]{2,}/gu) ?? []).filter((w) => !STOP.has(w));
+  const words = contentWords(q);
   if (!words.length) return null;
   return [...new Set(words)].slice(0, 12).map((w) => `"${w}"*`).join(" OR ");
 }
@@ -243,6 +245,24 @@ export function searchCaptures(userId: string, q: string, limit = 10): CaptureHi
      FROM captures_fts JOIN captures c ON c.id = captures_fts.rowid
      WHERE captures_fts MATCH ? AND c.user_id = ? ORDER BY bm25(captures_fts) LIMIT ?`,
   ).all(fq, userId, limit) as CaptureHit[];
+}
+
+export const NEAR_DUPLICATE_JACCARD = 0.6;
+
+/** True when an open or done item's title shares most of its content words with this title. */
+export function nearDuplicate(userId: string, title: string): boolean {
+  const a = new Set(contentWords(title));
+  if (!a.size) return false;
+  return searchItems(userId, title, 5).some((it) => {
+    const b = new Set(contentWords(it.title));
+    const shared = [...a].filter((w) => b.has(w)).length;
+    return shared / (a.size + b.size - shared) >= NEAR_DUPLICATE_JACCARD;
+  });
+}
+
+export function recentlyDoneItems(userId: string, limit = 15): Item[] {
+  return (db.query("SELECT * FROM items WHERE user_id = ? AND status = 'done' ORDER BY updated_at DESC LIMIT ?")
+    .all(userId, limit) as ItemRow[]).map(toItem);
 }
 
 export function openItems(userId: string, limit = 40): Item[] {
