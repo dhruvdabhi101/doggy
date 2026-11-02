@@ -1,5 +1,5 @@
 // Minimal service worker: makes the app installable and caches the shell. API calls always go to network.
-const SHELL = "doggy-shell-v2";
+const SHELL = "doggy-shell-v3";
 self.addEventListener("install", (e) => { self.skipWaiting(); e.waitUntil(caches.open(SHELL).then((c) => c.addAll(["/", "/icon.svg", "/icon-192.png", "/apple-touch-icon.png", "/manifest.webmanifest"]))); });
 self.addEventListener("activate", (e) => e.waitUntil(
   caches.keys().then((ks) => Promise.all(ks.filter((k) => k !== SHELL).map((k) => caches.delete(k)))).then(() => self.clients.claim()),
