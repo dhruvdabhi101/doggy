@@ -94,6 +94,16 @@ CREATE TABLE IF NOT EXISTS seen_lines (
   PRIMARY KEY (user_id, scope, hash)
 ) WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS seen_lines_age ON seen_lines(seen_at);
+CREATE TABLE IF NOT EXISTS source_prefs (
+  user_id TEXT NOT NULL, source_key TEXT NOT NULL, lane TEXT NOT NULL, updated_at TEXT NOT NULL,
+  PRIMARY KEY (user_id, source_key)
+);
+CREATE TABLE IF NOT EXISTS source_stats (
+  user_id TEXT NOT NULL, source_key TEXT NOT NULL, kind TEXT NOT NULL,
+  episodes INTEGER NOT NULL DEFAULT 0, calls_chars INTEGER NOT NULL DEFAULT 0,
+  items_kept INTEGER NOT NULL DEFAULT 0, last_seen_at TEXT NOT NULL,
+  PRIMARY KEY (user_id, source_key)
+);
 `);
 {
   const pending = db.query(

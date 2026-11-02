@@ -12,6 +12,7 @@ import { processPendingCaptures, processSource } from "./pipeline";
 import { handleMcp } from "./mcp";
 import { filterNewLines } from "./capture";
 import { classify } from "./sources";
+import { listSources, parseLaneBody, setLaneOverride } from "./lanes";
 
 const app = new Hono<AuthEnv>();
 app.use("/api/*", cors());
@@ -83,6 +84,18 @@ app.post("/api/capture", async (c) => {
     }
   })();
   return c.json({ accepted, deduped });
+});
+
+// ---- sources: which apps and sites get a model call, and how soon ----
+app.get("/api/sources", (c) => c.json({ sources: listSources(c.get("user").id) }));
+app.put("/api/sources/:key", async (c) => {
+  const key = c.req.param("key").trim();
+  if (!key || key.length > 300) return c.json({ error: "bad source key" }, 400);
+  const r = parseLaneBody(await c.req.json().catch(() => null));
+  if ("error" in r) return c.json({ error: r.error }, 400);
+  const user = c.get("user");
+  setLaneOverride(user.id, key, r.lane);
+  return c.json({ source: listSources(user.id).find((s) => s.key === key) ?? null });
 });
 
 // ---- notes (voice / text) ----
