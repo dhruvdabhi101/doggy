@@ -1,11 +1,38 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, ApiError, loadSession, saveSession, type CaptureHit, type Device, type Item, type ItemPatch, type ItemType, type Lane, type Session, type SourceInfo } from "./api";
 import { useSpeech } from "./speech";
+import { Legal, legalPageFor } from "./Legal";
 
 type Tab = "today" | "ask" | "memory" | "devices";
+const TABS: readonly Tab[] = ["today", "ask", "memory", "devices"];
+
+function tabFromUrl(): Tab {
+  const t = new URLSearchParams(location.search).get("tab");
+  return TABS.find((k) => k === t) ?? "today";
+}
+
+/** The tab lives in the URL so a reload, a shared link, and the back button all land on the same tab. */
+function useUrlTab(): [Tab, (t: Tab) => void] {
+  const [tab, setTab] = useState<Tab>(tabFromUrl);
+  useEffect(() => {
+    const onPop = () => setTab(tabFromUrl());
+    addEventListener("popstate", onPop);
+    return () => removeEventListener("popstate", onPop);
+  }, []);
+  const go = useCallback((t: Tab) => {
+    setTab(t);
+    if (t === tabFromUrl()) return;
+    const url = new URL(location.href);
+    if (t === "today") url.searchParams.delete("tab"); else url.searchParams.set("tab", t);
+    history.pushState(null, "", url);
+  }, []);
+  return [tab, go];
+}
 
 export default function App() {
   const [session, setSession] = useState<Session | null>(loadSession);
+  const legal = legalPageFor(location.pathname);
+  if (legal) return <Legal page={legal} />;
   if (!session) return <Auth onDone={(s) => { saveSession(s); setSession(s); }} />;
   return <Main session={session} onLogout={() => { saveSession(null); setSession(null); }} />;
 }
@@ -34,6 +61,7 @@ function Auth({ onDone }: { onDone: (s: Session) => void }) {
         <button type="button" className="link" onClick={() => setMode(mode === "login" ? "signup" : "login")}>
           {mode === "login" ? "New here? Create an account" : "Already have an account? Sign in"}
         </button>
+        <p className="muted small legal-links">By using Doggy you agree to how it handles your data. <a href="/privacy">Privacy</a> · <a href="/retention">Data retention</a></p>
       </form>
     </div>
   );
@@ -66,10 +94,7 @@ function useItems(onUnauthorized: () => void) {
 
 // ---------------- main shell ----------------
 function Main({ session, onLogout }: { session: Session; onLogout: () => void }) {
-  const [tab, setTab] = useState<Tab>(() => {
-    const t = new URLSearchParams(location.search).get("tab");
-    return t === "ask" || t === "memory" || t === "devices" ? t : "today";
-  });
+  const [tab, setTab] = useUrlTab();
   const { items, upsert } = useItems(onLogout);
   const [toast, setToast] = useState<string | null>(null);
   const [llm, setLlm] = useState<string>("");
@@ -383,6 +408,7 @@ function Devices({ llm }: { llm: string }) {
         <p className="muted small">Endpoint <code>{origin}/mcp</code> with header <code>Authorization: Bearer &lt;device token&gt;</code>. Tools: search_memory, list_open_loops, remember.</p>
       </div>
       <p className="muted small">Extraction engine: {llm || "…"}</p>
+      <p className="muted small legal-links"><a href="/privacy">Privacy policy</a> · <a href="/retention">Data retention</a></p>
     </section>
   );
 }
