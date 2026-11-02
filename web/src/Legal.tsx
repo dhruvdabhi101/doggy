@@ -38,6 +38,7 @@ function Privacy() {
         <li><b>Devices.</b> Each signed-in device has a name, a type, a hashed access token, and the time it was last seen.</li>
         <li><b>Screen text.</b> When the desktop app is installed and not paused, it reads the visible text of the window in front every few seconds. Only lines it has not already sent for that window are uploaded, along with the app name, window title, and page address.</li>
         <li><b>Notes and questions.</b> Anything you type or say into Doggy, and questions you ask it.</li>
+        <li><b>Capture settings and counts.</b> Which apps and sites Doggy has seen for you, how many times it checked each one, and whether you set it to fast, hourly or off. Also daily totals of AI calls and tokens.</li>
         <li><b>Items.</b> The tasks, commitments, events, decisions and memories Doggy finds, each with a short quote from where it was found.</li>
       </ul>
 
@@ -87,6 +88,9 @@ function Retention() {
             <tr><td>Items (tasks, commitments, memories)</td><td>Until your account is deleted</td><td>Deleting an item hides it so it can be restored. It is erased with your account.</td></tr>
             <tr><td>Notes and voice notes (as text)</td><td>Until your account is deleted</td><td>Account deletion</td></tr>
             <tr><td>Account details</td><td>Until your account is deleted</td><td>Account deletion</td></tr>
+            <tr><td>Fingerprints of screen lines already seen</td><td>30 days</td><td>Deleted automatically. A fingerprint is a one-way hash of a line, used only to avoid processing the same text twice. The line can't be read back from it.</td></tr>
+            <tr><td>Per-app and per-site activity counts, and your capture settings for each</td><td>Until your account is deleted</td><td>Account deletion. Change a setting under Devices.</td></tr>
+            <tr><td>Daily usage totals (number of AI calls and tokens)</td><td>Until your account is deleted</td><td>Account deletion. These hold counts only, no text.</td></tr>
             <tr><td>Device records and tokens</td><td>Until the device is removed</td><td>Remove it under Devices</td></tr>
             <tr><td>Server logs</td><td>7 days</td><td>Automatic. Logs can include app names, window titles and short quotes from found items.</td></tr>
             <tr><td>Text sent to Anthropic</td><td>Set by Anthropic's API data retention policy</td><td>Automatic, by Anthropic</td></tr>
