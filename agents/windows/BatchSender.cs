@@ -25,6 +25,13 @@ public sealed class BatchSender
     private int _backoffMs;
     private readonly Stopwatch _sinceFail = new();
 
+    /// <summary>Raised (on the caller's thread) after a chunk is accepted; arg = events sent.</summary>
+    public event Action<int>? Sent;
+    /// <summary>Raised after a failed POST; args = HTTP status (0 = network error), message.</summary>
+    public event Action<int, string>? Failed;
+
+    public int QueueCount => _queue.Count;
+
     public BatchSender(AgentConfig cfg)
     {
         _client = new ApiClient(cfg.Server, cfg.Token);
@@ -61,13 +68,15 @@ public sealed class BatchSender
             int take = Math.Min(MaxPerRequest, _queue.Count);
             var chunk = _queue.GetRange(0, take);
 
-            bool ok;
-            try { ok = _client.PostCaptureAsync(chunk).GetAwaiter().GetResult(); }
-            catch { ok = false; }
+            int status;
+            string error = "";
+            try { status = _client.PostCaptureAsync(chunk).GetAwaiter().GetResult(); }
+            catch (Exception ex) { status = 0; error = ex.Message; }
 
-            if (!ok)
+            if (status < 200 || status >= 300)
             {
                 OnFailure();
+                Failed?.Invoke(status, status == 0 ? "network error: " + error : $"server returned HTTP {status}");
                 return; // keep queue, retry later with backoff
             }
 
@@ -75,6 +84,7 @@ public sealed class BatchSender
             foreach (var ev in chunk) _queueBytes -= ApproxBytes(ev);
             _queue.RemoveRange(0, take);
             OnSuccess();
+            Sent?.Invoke(take);
         }
     }
 

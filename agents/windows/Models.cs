@@ -47,3 +47,30 @@ public sealed class DeviceDto
     [JsonPropertyName("name")] public string? Name { get; set; }
     [JsonPropertyName("kind")] public string? Kind { get; set; }
 }
+
+// ---- Notes ----
+
+public sealed class NoteRequest
+{
+    [JsonPropertyName("text")] public string Text { get; set; } = "";
+    [JsonPropertyName("source")] public string Source { get; set; } = "text";
+}
+
+public sealed class NoteResponse
+{
+    [JsonPropertyName("note")] public NoteDto? Note { get; set; }
+    [JsonPropertyName("items")] public List<ItemDto> Items { get; set; } = new();
+}
+
+public sealed class NoteDto
+{
+    [JsonPropertyName("id")] public string? Id { get; set; }
+}
+
+public sealed class ItemDto
+{
+    [JsonPropertyName("id")] public string? Id { get; set; }
+    [JsonPropertyName("type")] public string? Type { get; set; }
+    [JsonPropertyName("title")] public string? Title { get; set; }
+    [JsonPropertyName("dueAt")] public string? DueAt { get; set; }
+}

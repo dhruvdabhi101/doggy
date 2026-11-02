@@ -1,7 +1,9 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <OutputType>Exe</OutputType>
+    <!-- WinExe: no console window when launched as the tray app. CLI mode
+         re-attaches to the parent terminal's console via AttachConsole. -->
+    <OutputType>WinExe</OutputType>
     <TargetFramework>net10.0-windows</TargetFramework>
     <AssemblyName>doggy-agent</AssemblyName>
     <RootNamespace>DoggyAgent</RootNamespace>
@@ -10,10 +12,34 @@
     <LangVersion>latest</LangVersion>
     <!-- Gives UIAutomationClient / System.Windows.Automation -->
     <UseWPF>true</UseWPF>
+    <!-- NotifyIcon + tray forms -->
+    <UseWindowsForms>true</UseWindowsForms>
     <!-- Lets this build (not run) on macOS/Linux -->
     <EnableWindowsTargeting>true</EnableWindowsTargeting>
     <Deterministic>true</Deterministic>
     <InvariantGlobalization>true</InvariantGlobalization>
+    <ApplicationIcon>Assets\doggy.ico</ApplicationIcon>
+    <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
+
+    <!-- Metadata -->
+    <Product>Doggy</Product>
+    <Company>Doggy</Company>
+    <AssemblyTitle>Doggy</AssemblyTitle>
+    <Description>Doggy desktop capture agent for Windows</Description>
+    <Copyright>Copyright (c) 2026 Doggy</Copyright>
+    <Version>0.1.0</Version>
+    <FileVersion>0.1.0.0</FileVersion>
+    <AssemblyVersion>0.1.0.0</AssemblyVersion>
+    <InformationalVersion>0.1.0</InformationalVersion>
+    <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
+
+    <!-- Single-file publish: compress the bundled runtime to shrink the exe. -->
+    <EnableCompressionInSingleFile Condition="'$(SelfContained)' == 'true'">true</EnableCompressionInSingleFile>
   </PropertyGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="Assets\doggy.ico" LogicalName="Doggy.doggy.ico" />
+    <None Remove="scripts\**" />
+  </ItemGroup>
 
 </Project>

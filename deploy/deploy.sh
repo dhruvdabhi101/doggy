@@ -9,4 +9,4 @@ cd "$APP/server" && sudo -u doggy "$BUN" install --frozen-lockfile
 cd "$APP/web" && sudo -u doggy "$BUN" install --frozen-lockfile && sudo -u doggy "$BUN" run build
 systemctl restart doggy
 sleep 2
-curl -fsS http://127.0.0.1:8787/api/health && echo " <- deployed $(git -C "$APP" rev-parse --short HEAD)"
+curl -fsS http://127.0.0.1:8787/api/health && echo " <- deployed $(sudo -u doggy git -C "$APP" rev-parse --short HEAD)"
