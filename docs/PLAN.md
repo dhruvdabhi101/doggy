@@ -41,7 +41,19 @@ voice/text notes, and answer questions.
 - [x] Windows agent: UI Automation walk with caching, `IsPassword` skip, exclusions, pause file, diffing, batching.
       **Compiles only; never run on Windows.**
 
+- [x] **Deployed:** https://doggy.ruv.world (VPS + Caddy + Let's Encrypt, systemd service, deploy from git with
+      `deploy/deploy.sh`). See TECHNICAL.md → Production deployment.
+- [x] **iOS-ready PWA:** PNG icons (180/192/512, opaque), manifest with shortcuts, offline shell cache, and an
+      "Add to Home Screen" hint on iOS Safari.
+- [x] **Desktop apps with UI, downloadable from the Devices page:**
+      Mac menu bar app `Doggy.app` / `Doggy-mac.dmg` (arm64, ad-hoc signed; built and launched, menus not clicked through).
+      Windows tray app `Doggy-windows.exe` (self-contained single file; compiles, **never run on Windows**).
+      Both: sign in / create account, status, quick note, pause/resume, start at login, open web app.
+
 ### Not verified yet (do these first)
+- [ ] Click through the Mac app: sign in to doggy.ruv.world, grant Accessibility, confirm items appear.
+- [ ] Windows tray app on a real PC (sign in, tray menu, start with Windows, capture in Chrome/Slack/Teams/WhatsApp/Outlook).
+- [ ] Install the PWA on a real iPhone; voice notes in standalone mode.
 - [x] Extraction with a real key (2026-11-02 smoke test). Voice note → 3/3 correct items with resolved dates
       (Sonnet, ~5s). Noisy Slack screen → 3/3 correct (task, commitment, decision), UI chrome ignored (Haiku).
       Fixed: "ask" misread UTC times as local; sources now show local times.
@@ -60,8 +72,8 @@ voice/text notes, and answer questions.
 5. **Reminders:** web push notifications for due/overdue items, plus a daily digest.
 6. **Better voice:** record with MediaRecorder and transcribe server-side (Deepgram) for accuracy and long notes.
 7. **Embeddings + hybrid search** for "ask" (sqlite-vec), plus people/entity resolution (Raj = raj@acme = +91…).
-8. **Desktop app shell (Tauri):** tray icon, onboarding, permission prompts, pause button, exclusions UI. Bundle the
-   agents as sidecars. Code-sign (Apple notarization, Windows EV cert).
+8. **Desktop distribution polish:** Apple Developer ID + notarization, Windows code-signing cert, universal (arm64+x64)
+   Mac build, exclusions UI, auto-update. Build both in GitHub Actions on tag and publish to the server.
 9. **Native phone apps (Expo/React Native):** home-screen widget, Action button / Siri Shortcut, Android quick tile
    for one-tap voice; offline cache from `/api/changes`.
 10. **Privacy hardening:** redact secrets/PII before LLM calls; encrypt captures at rest; retention limits for raw
