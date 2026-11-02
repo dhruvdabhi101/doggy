@@ -49,16 +49,21 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ email, password, name, tz: Intl.DateTimeFormat().resolvedOptions().timeZone, deviceName: deviceName(), deviceKind: deviceKind() }),
     }),
-  health: () => call<{ ok: boolean; llm: string }>("/api/health"),
   changes: (since: number) => call<{ items: Item[]; cursor: number }>(`/api/changes?since=${since}`),
   note: (text: string, source: "voice" | "text") =>
     call<{ items: Item[]; warning?: string }>("/api/notes", { method: "POST", body: JSON.stringify({ text, source }) }),
   patch: (id: string, patch: ItemPatch) =>
-    call<{ item: Item }>(`/api/items/${id}`, { method: "PATCH", body: JSON.stringify(patch) }),
+    call<{ item: Item }>(`/api/items/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify(patch) }),
   search: (q: string) => call<{ items: Item[]; captures: CaptureHit[] }>(`/api/search?q=${encodeURIComponent(q)}`),
   ask: (question: string) => call<{ answer: string; sources: Item[] }>("/api/ask", { method: "POST", body: JSON.stringify({ question }) }),
+  logout: () => call<{ ok: boolean }>("/api/auth/logout", { method: "POST" }),
   devices: () => call<{ devices: Device[] }>("/api/devices"),
-  removeDevice: (id: string) => call(`/api/devices/${id}`, { method: "DELETE" }),
+  removeDevice: (id: string) => call(`/api/devices/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  mcpToken: (name: string) => call<{ token: string; device: Device }>("/api/devices/mcp-token", { method: "POST", body: JSON.stringify({ name }) }),
+  oauthClient: (clientId: string, redirectUri: string) =>
+    call<{ name: string; redirectHost: string }>(`/oauth/client?client_id=${encodeURIComponent(clientId)}&redirect_uri=${encodeURIComponent(redirectUri)}`),
+  oauthApprove: (params: Record<string, string>, approve: boolean) =>
+    call<{ redirect: string }>("/oauth/approve", { method: "POST", body: JSON.stringify({ ...params, approve }) }),
   sources: () => call<{ sources: SourceInfo[] }>("/api/sources"),
   setSourceLane: (key: string, lane: Lane | null) =>
     call<{ source: SourceInfo | null }>(`/api/sources/${encodeURIComponent(key)}`, { method: "PUT", body: JSON.stringify({ lane }) }),

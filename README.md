@@ -33,4 +33,4 @@ doggy-agent.exe run
 **Phone:** voice input needs HTTPS. Expose the server with a tunnel (`cloudflared tunnel --url http://localhost:8787`)
 or deploy it, open the URL on the phone, sign in with the same account, then use "Add to Home Screen".
 
-**Claude / ChatGPT:** connect an MCP client to `https://<server>/mcp` with header `Authorization: Bearer <device token>`.
+**Claude / ChatGPT / Cursor:** add `https://<server>/mcp` as a connector; the app signs you in with OAuth. The dashboard's Connect AI page has one-click installs and a token for clients without OAuth.

@@ -5,28 +5,33 @@ export type AuthUser = { id: string; email: string; name: string | null; tz: str
 export type AuthDevice = { id: string; name: string; kind: string };
 export type AuthEnv = { Variables: { user: AuthUser; device: AuthDevice } };
 
-const DEVICE_KINDS = new Set(["web", "mac-agent", "windows-agent", "ios", "android"]);
+const DEVICE_KINDS = new Set(["web", "mac-agent", "windows-agent", "ios", "android", "mcp"]);
 
-const sha256 = (s: string) => new Bun.CryptoHasher("sha256").update(s).digest("hex");
+export const sha256 = (s: string) => new Bun.CryptoHasher("sha256").update(s).digest("hex");
 
-function issueDevice(userId: string, deviceName: string | undefined, deviceKind: string | undefined) {
+export function issueDevice(userId: string, deviceName: string | undefined, deviceKind: string | undefined) {
   const token = Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString("hex");
   const kind = DEVICE_KINDS.has(deviceKind ?? "") ? deviceKind! : "web";
-  const device = { id: uid(), name: (deviceName || kind).slice(0, 80), kind };
+  const device = { id: uid(), name: String(deviceName || kind).slice(0, 80), kind };
   db.query("INSERT INTO devices (id,user_id,name,kind,token_hash,last_seen_at,created_at) VALUES (?,?,?,?,?,?,?)")
     .run(device.id, userId, device.name, device.kind, sha256(token), now(), now());
   return { token, device };
 }
 
+function validTz(tz: unknown): string | null {
+  if (typeof tz !== "string" || tz.length > 64) return null;
+  try { new Intl.DateTimeFormat("en-US", { timeZone: tz }); return tz; } catch { return null; }
+}
+
 type Creds = { email?: string; password?: string; name?: string; tz?: string; deviceName?: string; deviceKind?: string };
 
 export async function signup(body: Creds) {
-  const email = body.email?.trim().toLowerCase();
-  if (!email || !email.includes("@") || !body.password || body.password.length < 6)
-    return { error: "Email and a password of at least 6 characters are required", status: 400 as const };
+  const email = typeof body.email === "string" ? body.email.trim().toLowerCase() : "";
+  if (!email || email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || typeof body.password !== "string" || body.password.length < 8 || body.password.length > 200)
+    return { error: "Enter a valid email and a password of at least 8 characters", status: 400 as const };
   if (db.query("SELECT 1 FROM users WHERE email = ?").get(email))
     return { error: "An account with this email already exists", status: 409 as const };
-  const user = { id: uid(), email, name: body.name?.trim() || null, tz: body.tz || "UTC" };
+  const user = { id: uid(), email, name: (typeof body.name === "string" && body.name.trim().slice(0, 100)) || null, tz: validTz(body.tz) ?? "UTC" };
   db.query("INSERT INTO users (id,email,name,pw_hash,tz,created_at) VALUES (?,?,?,?,?,?)")
     .run(user.id, email, user.name, await Bun.password.hash(body.password), user.tz, now());
   const { token, device } = issueDevice(user.id, body.deviceName, body.deviceKind);
@@ -34,12 +39,12 @@ export async function signup(body: Creds) {
 }
 
 export async function login(body: Creds) {
-  const email = body.email?.trim().toLowerCase();
-  const row = db.query("SELECT * FROM users WHERE email = ?").get(email ?? "") as
+  const email = typeof body.email === "string" ? body.email.trim().toLowerCase() : "";
+  const row = db.query("SELECT * FROM users WHERE email = ?").get(email) as
     | { id: string; email: string; name: string | null; pw_hash: string } | null;
-  if (!row || !body.password || !(await Bun.password.verify(body.password, row.pw_hash)))
+  if (!row || typeof body.password !== "string" || body.password.length > 200 || !(await Bun.password.verify(body.password, row.pw_hash)))
     return { error: "Invalid email or password", status: 401 as const };
-  if (body.tz) db.query("UPDATE users SET tz = ? WHERE id = ?").run(body.tz, row.id);
+  { const tz = validTz(body.tz); if (tz) db.query("UPDATE users SET tz = ? WHERE id = ?").run(tz, row.id); }
   const { token, device } = issueDevice(row.id, body.deviceName, body.deviceKind);
   return { token, user: { id: row.id, email: row.email, name: row.name }, device };
 }
@@ -59,9 +64,10 @@ export function userForToken(token: string): { user: AuthUser; device: AuthDevic
 
 export async function requireAuth(c: Context<AuthEnv>, next: Next) {
   const h = c.req.header("authorization") ?? "";
-  const token = h.startsWith("Bearer ") ? h.slice(7).trim() : "";
+  const token = /^bearer /i.test(h) ? h.slice(7).trim() : "";
   const auth = token ? userForToken(token) : null;
   if (!auth) return c.json({ error: "Unauthorized" }, 401);
+  if (auth.device.kind === "mcp" && c.req.path !== "/mcp") return c.json({ error: "This token only works for MCP" }, 403);
   c.set("user", auth.user);
   c.set("device", auth.device);
   await next();

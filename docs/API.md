@@ -93,4 +93,23 @@ type Item = {
 
 ## MCP
 `POST /mcp` — MCP streamable-HTTP (JSON-RPC) endpoint, Bearer token auth. Tools: `search_memory`,
-`list_open_loops`, `remember`.
+`list_open_loops`, `remember`. An unauthenticated call returns 401 with
+`WWW-Authenticate: Bearer resource_metadata=".../.well-known/oauth-protected-resource/mcp"`, so clients
+that speak MCP OAuth (Claude, ChatGPT, Cursor, VS Code, Claude Code) connect from the URL alone.
+
+OAuth 2.1 (authorization code + PKCE S256, public clients only):
+- `GET /.well-known/oauth-protected-resource[/mcp]`, `GET /.well-known/oauth-authorization-server` — discovery.
+- `POST /oauth/register` — dynamic client registration (RFC 7591). Redirects must be https, loopback http, or an app scheme.
+- `GET /oauth/authorize` — web page: sign in, then Allow / Cancel.
+- `GET /oauth/client?client_id&redirect_uri` — public; name of a registered client (used by the consent page).
+- `POST /oauth/approve` — signed-in user's decision; returns `{ redirect }`.
+- `POST /oauth/token` — `grant_type=authorization_code`. The access token is a device token of kind `mcp`.
+
+`POST /api/auth/logout` — revokes the calling device's token.
+
+Rate limits (429 with `Retry-After`): `/api/auth/*` 20 per 15 min per IP; `/oauth/register` 20/h and `/oauth/token` 60/10 min per IP;
+`/api/ask` 60, `/api/notes` 120, `/mcp` 300 per 10 min per user; `/api/capture` 600 per 10 min per device. Notes and MCP `remember`
+text is truncated to 20,000 characters. The client IP comes from the last `X-Forwarded-For` entry, and only when the peer is loopback (Caddy).
+
+`POST /api/devices/mcp-token` `{ name }` → `{ token, device }` — a token for clients without OAuth.
+Tokens of kind `mcp` are accepted only on `/mcp`; they get 403 on `/api/*`.

@@ -7,20 +7,37 @@ import {
   db, getItem, insertItem, now, searchCaptures, searchItems, toItem, uid, updateItem, openItems,
   type ItemPatch, type ItemRow,
 } from "./db";
-import { answer, hasLLM, MODEL, MODEL_FAST, ITEM_TYPES } from "./llm";
+import { answer, hasLLM, ITEM_TYPES, type AnswerSource } from "./llm";
 import { processPendingCaptures, processSources } from "./pipeline";
 import { handleMcp } from "./mcp";
 import { filterNewLines } from "./capture";
 import { classify } from "./sources";
 import { listSources, parseLaneBody, setLaneOverride } from "./lanes";
 import { recordUsage, usageReport } from "./usage";
+import { mountOAuth, resourceMetadataUrl } from "./oauth";
+import { rateLimit } from "./ratelimit";
+import { issueDevice } from "./auth";
 
 const app = new Hono<AuthEnv>();
+app.use("*", async (c, next) => {
+  await next();
+  c.header("x-content-type-options", "nosniff");
+  c.header("referrer-policy", "strict-origin-when-cross-origin");
+  if (c.res.headers.get("content-type")?.startsWith("text/html")) {
+    c.header("x-frame-options", "DENY");
+    c.header("content-security-policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; manifest-src 'self'; worker-src 'self'; frame-ancestors 'none'; base-uri 'self'; object-src 'none'; form-action 'self'");
+  }
+});
+// Bearer-token API, no cookies, so a permissive CORS policy does not expose anything.
 app.use("/api/*", cors());
-app.use("/mcp", cors());
+app.use("/mcp", cors({ origin: "*", exposeHeaders: ["WWW-Authenticate", "Mcp-Session-Id"] }));
+app.use("/oauth/*", cors());
+app.use("/.well-known/*", cors());
+mountOAuth(app);
 
-app.get("/api/health", (c) => c.json({ ok: true, llm: hasLLM ? `${MODEL_FAST} (capture), ${MODEL} (notes/ask)` : "heuristic (no ANTHROPIC_API_KEY)" }));
+app.get("/api/health", (c) => c.json({ ok: true }));
 
+app.use("/api/auth/*", rateLimit("auth", 20, 15 * 60_000));
 app.post("/api/auth/signup", async (c) => {
   const r = await signup(await c.req.json().catch(() => ({})));
   return "error" in r ? c.json({ error: r.error }, r.status) : c.json(r);
@@ -30,8 +47,40 @@ app.post("/api/auth/login", async (c) => {
   return "error" in r ? c.json({ error: r.error }, r.status) : c.json(r);
 });
 
+// ---- desktop app downloads (public: the landing page links them) ----
+const DOWNLOADS = process.env.DOGGY_DOWNLOADS ?? `${import.meta.dir}/../data/downloads`;
+const DOWNLOAD_FILES = { mac: "Doggy-mac.dmg", windows: "Doggy-windows.exe" } as const;
+app.get("/api/downloads", (c) => {
+  const out: Record<string, { url: string; builtAt: string }> = {};
+  for (const [k, f] of Object.entries(DOWNLOAD_FILES)) {
+    const path = `${DOWNLOADS}/${f}`;
+    if (!existsSync(path)) continue;
+    const mtime = statSync(path).mtime;
+    // The version in the URL makes every new upload a new URL, so no browser or proxy cache can serve an old build.
+    out[k] = { url: `/downloads/${f}?v=${mtime.getTime()}`, builtAt: mtime.toISOString() };
+  }
+  return c.json(out);
+});
+app.get("/downloads/:file", (c) => {
+  const f = c.req.param("file");
+  if (!Object.values(DOWNLOAD_FILES).includes(f as any) || !existsSync(`${DOWNLOADS}/${f}`)) return c.json({ error: "Not found" }, 404);
+  return c.body(Bun.file(`${DOWNLOADS}/${f}`).stream(), 200, {
+    "content-type": "application/octet-stream",
+    "content-disposition": `attachment; filename="${f}"`,
+    "cache-control": "no-cache",
+  });
+});
+
 app.use("/api/*", requireAuth);
-app.use("/mcp", requireAuth);
+app.use("/mcp", async (c, next) => {
+  if (!/^bearer \S/i.test(c.req.header("authorization") ?? "")) {
+    c.header("WWW-Authenticate", `Bearer resource_metadata="${resourceMetadataUrl(c)}"`);
+    return c.json({ error: "Unauthorized" }, 401);
+  }
+  const denied = await requireAuth(c, next);
+  if (denied) denied.headers.set("WWW-Authenticate", `Bearer error="invalid_token", resource_metadata="${resourceMetadataUrl(c)}"`);
+  return denied;
+});
 
 app.get("/api/me", (c) => c.json({ user: c.get("user"), device: c.get("device") }));
 
@@ -40,6 +89,18 @@ app.get("/api/devices", (c) => {
     "SELECT id, name, kind, last_seen_at AS lastSeenAt, created_at AS createdAt FROM devices WHERE user_id = ? ORDER BY last_seen_at DESC",
   ).all(c.get("user").id);
   return c.json({ devices });
+});
+app.post("/api/auth/logout", (c) => {
+  db.query("DELETE FROM devices WHERE id = ? AND user_id = ?").run(c.get("device").id, c.get("user").id);
+  return c.json({ ok: true });
+});
+
+/** A token for MCP clients that can't do OAuth. Shown once; only works on /mcp. */
+app.post("/api/devices/mcp-token", async (c) => {
+  const b = (await c.req.json().catch(() => ({}))) as { name?: unknown };
+  const name = typeof b.name === "string" && b.name.trim() ? b.name.trim().slice(0, 60) : "MCP client";
+  const { token, device } = issueDevice(c.get("user").id, name, "mcp");
+  return c.json({ token, device });
 });
 app.delete("/api/devices/:id", (c) => {
   db.query("DELETE FROM devices WHERE id = ? AND user_id = ?").run(c.req.param("id"), c.get("user").id);
@@ -61,7 +122,7 @@ function parseCaptureEvent(e: any): CaptureEvent | null {
   };
 }
 
-app.post("/api/capture", async (c) => {
+app.post("/api/capture", rateLimit("capture", 600, 10 * 60_000, (c) => c.get("device").id), async (c) => {
   const body = (await c.req.json().catch(() => null)) as { events?: unknown[] } | null;
   const events = (Array.isArray(body?.events) ? body!.events.slice(0, MAX_EVENTS) : [])
     .map(parseCaptureEvent).filter((e): e is CaptureEvent => !!e);
@@ -102,9 +163,10 @@ app.put("/api/sources/:key", async (c) => {
 app.get("/api/usage", (c) => c.json(usageReport(c.get("user").id)));
 
 // ---- notes (voice / text) ----
-app.post("/api/notes", async (c) => {
-  const body = (await c.req.json().catch(() => ({}))) as { text?: string; source?: string };
-  const text = body.text?.trim();
+export const MAX_NOTE_CHARS = 20_000;
+app.post("/api/notes", rateLimit("notes", 120, 10 * 60_000, (c) => c.get("user").id), async (c) => {
+  const body = (await c.req.json().catch(() => ({}))) as { text?: unknown; source?: string };
+  const text = typeof body.text === "string" ? body.text.trim().slice(0, MAX_NOTE_CHARS) : "";
   if (!text) return c.json({ error: "text is required" }, 400);
   const source = body.source === "voice" ? "voice" : "text";
   const user = c.get("user");
@@ -210,9 +272,11 @@ app.get("/api/search", (c) => {
   const u = c.get("user").id;
   return c.json({ items: searchItems(u, q, 30), captures: searchCaptures(u, q, 15) });
 });
-app.post("/api/ask", async (c) => {
-  const { question } = (await c.req.json().catch(() => ({}))) as { question?: string };
-  if (!question?.trim()) return c.json({ error: "question is required" }, 400);
+const ORIGIN = { capture: "screen", voice: "user said", text: "user wrote" } as const;
+app.post("/api/ask", rateLimit("ask", 60, 10 * 60_000, (c) => c.get("user").id), async (c) => {
+  const body = (await c.req.json().catch(() => ({}))) as { question?: unknown };
+  const question = typeof body.question === "string" ? body.question.trim().slice(0, 1000) : "";
+  if (!question) return c.json({ error: "question is required" }, 400);
   const user = c.get("user");
   const items = searchItems(user.id, question, 15);
   const timeQ = /\b(today|tomorrow|week|due|pending|open|forget|promis|owe|todo|task|focus|next)/i.test(question);
@@ -222,12 +286,12 @@ app.post("/api/ask", async (c) => {
   // Give the model local times; raw UTC ISO strings get misread as local time.
   const local = (iso: string) =>
     new Date(iso).toLocaleString("en-US", { timeZone: user.tz, weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
-  const sources = [
+  const sources: AnswerSource[] = [
     ...all.map((i) => ({
-      label: `${i.type} (${i.status}) created ${local(i.createdAt)}${i.dueAt ? `, due ${local(i.dueAt)}` : ""}${i.sourceApp ? `, from ${i.sourceApp}` : ""}`,
-      text: `${i.title}${i.details ? ` — ${i.details}` : ""}${i.counterparty ? ` (with ${i.counterparty})` : ""}${i.evidence ? `\nQuote: "${i.evidence}"` : ""}`,
+      attrs: { kind: i.type, status: i.status, origin: ORIGIN[i.sourceKind as keyof typeof ORIGIN], noted: local(i.createdAt), due: i.dueAt && local(i.dueAt), with: i.counterparty, app: i.sourceApp },
+      text: `${i.title}${i.details ? `\n${i.details}` : ""}${i.evidence ? `\nQuote: "${i.evidence}"` : ""}`,
     })),
-    ...caps.map((x) => ({ label: `screen text from ${x.app} / ${x.window} at ${local(x.capturedAt)}`, text: x.text })),
+    ...caps.map((x) => ({ attrs: { kind: "seen", origin: "screen", app: x.app, window: x.window, at: local(x.capturedAt) }, text: x.text })),
   ];
   try {
     const r = await answer(question, user.tz, sources);
@@ -235,36 +299,12 @@ app.post("/api/ask", async (c) => {
     return c.json({ answer: r.text, sources: all });
   } catch (e) {
     console.error("[ask] failed:", (e as Error).message);
-    return c.json({ answer: "Answering failed; showing matches instead.", sources: all });
+    return c.json({ answer: "I couldn't answer that right now. Here's what matched.", sources: all });
   }
 });
 
-app.post("/mcp", handleMcp);
+app.post("/mcp", rateLimit("mcp", 300, 10 * 60_000, (c) => c.get("user").id), handleMcp);
 app.get("/mcp", (c) => c.body(null, 405));
-
-// ---- desktop app downloads (files are uploaded to DOGGY_DOWNLOADS on the server, not kept in git) ----
-const DOWNLOADS = process.env.DOGGY_DOWNLOADS ?? `${import.meta.dir}/../data/downloads`;
-const DOWNLOAD_FILES = { mac: "Doggy-mac.dmg", windows: "Doggy-windows.exe" } as const;
-app.get("/api/downloads", (c) => {
-  const out: Record<string, { url: string; builtAt: string }> = {};
-  for (const [k, f] of Object.entries(DOWNLOAD_FILES)) {
-    const path = `${DOWNLOADS}/${f}`;
-    if (!existsSync(path)) continue;
-    const mtime = statSync(path).mtime;
-    // The version in the URL makes every new upload a new URL, so no browser or proxy cache can serve an old build.
-    out[k] = { url: `/downloads/${f}?v=${mtime.getTime()}`, builtAt: mtime.toISOString() };
-  }
-  return c.json(out);
-});
-app.get("/downloads/:file", (c) => {
-  const f = c.req.param("file");
-  if (!Object.values(DOWNLOAD_FILES).includes(f as any) || !existsSync(`${DOWNLOADS}/${f}`)) return c.json({ error: "Not found" }, 404);
-  return c.body(Bun.file(`${DOWNLOADS}/${f}`).stream(), 200, {
-    "content-type": "application/octet-stream",
-    "content-disposition": `attachment; filename="${f}"`,
-    "cache-control": "no-cache",
-  });
-});
 
 // ---- web app (built PWA) ----
 const WEB_DIST = `${import.meta.dir}/../../web/dist`;
@@ -277,5 +317,5 @@ if (existsSync(WEB_DIST)) {
 setInterval(() => void processPendingCaptures(), 10_000);
 
 const port = Number(process.env.PORT ?? 8787);
-console.log(`doggy server on http://localhost:${port}  (llm: ${hasLLM ? `${MODEL_FAST} capture / ${MODEL} notes+ask` : "heuristic fallback"})`);
+console.log(`doggy server on http://localhost:${port}${hasLLM ? "" : " (no ANTHROPIC_API_KEY: heuristic extraction)"}`);
 export default { port, hostname: process.env.HOST ?? "0.0.0.0", fetch: app.fetch };

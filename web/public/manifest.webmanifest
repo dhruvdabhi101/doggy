@@ -3,12 +3,12 @@
   "short_name": "Doggy",
   "description": "Remembers what you promised and what you were asked to do.",
   "id": "/",
-  "start_url": "/",
+  "start_url": "/app",
   "scope": "/",
   "display": "standalone",
   "orientation": "portrait",
-  "background_color": "#f6f3ee",
-  "theme_color": "#f6f3ee",
+  "background_color": "#fffcf0",
+  "theme_color": "#fffcf0",
   "icons": [
     {
       "src": "/icon-192.png",
@@ -37,11 +37,15 @@
   "shortcuts": [
     {
       "name": "Ask",
-      "url": "/?tab=ask"
+      "url": "/app/ask"
     },
     {
       "name": "Memory",
-      "url": "/?tab=memory"
+      "url": "/app/memory"
+    },
+    {
+      "name": "Connect AI",
+      "url": "/app/connect"
     }
   ]
 }

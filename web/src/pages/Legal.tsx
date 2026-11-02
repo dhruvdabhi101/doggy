@@ -8,14 +8,17 @@ export function legalPageFor(path: string): LegalPage | null {
   return p === "/privacy" ? "privacy" : p === "/retention" ? "retention" : null;
 }
 
+import { Brand } from "../components/Brand";
+import { Link } from "../lib/router";
+
 export function Legal({ page }: { page: LegalPage }) {
   return (
     <div className="legal">
       <header className="legal-top">
-        <a className="brand" href="/"><img src="/icon.svg" alt="" width={28} height={28} /> Doggy</a>
+        <Brand />
         <nav className="small">
-          <a href="/privacy" className={page === "privacy" ? "on" : ""}>Privacy</a>
-          <a href="/retention" className={page === "retention" ? "on" : ""}>Data retention</a>
+          <Link to="/privacy" className={page === "privacy" ? "on" : ""}>Privacy</Link>
+          <Link to="/retention" className={page === "retention" ? "on" : ""}>Data retention</Link>
         </nav>
       </header>
       <article className="card legal-body">

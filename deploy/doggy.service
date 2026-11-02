@@ -8,7 +8,7 @@ User=doggy
 Group=doggy
 WorkingDirectory=/srv/doggy/server
 EnvironmentFile=/etc/doggy/doggy.env
-Environment=HOST=127.0.0.1 PORT=8787 DOGGY_DB=/var/lib/doggy/doggy.db DOGGY_DOWNLOADS=/var/lib/doggy/downloads NODE_ENV=production
+Environment=HOST=127.0.0.1 PORT=8787 DOGGY_PUBLIC_URL=https://doggy.ruv.world DOGGY_DB=/var/lib/doggy/doggy.db DOGGY_DOWNLOADS=/var/lib/doggy/downloads NODE_ENV=production
 ExecStart=/opt/bun/bin/bun src/index.ts
 Restart=always
 RestartSec=3

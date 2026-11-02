@@ -39,12 +39,18 @@ export async function processSources(user: UserCtx, kind: ExtractInput["kind"], 
       sourceWindow: src.window ?? null, sourceId: src.sourceId, confidence: it.confidence,
     }));
   }
+  // The model's quote must really be in what was read; otherwise text on screen could close anything.
+  const haystack = squash(inputs.map((s) => s.text).join("\n"));
   for (const c of out.closes) {
+    const quote = squash(c.evidence);
+    if (quote.length < 8 || !haystack.includes(quote)) continue;
     updateItem(user.id, c.item_id, { status: "done" });
     console.log(`[pipeline] closed ${c.item_id}: ${c.evidence.slice(0, 80)}`);
   }
   return created;
 }
+
+const squash = (s: string) => s.toLowerCase().replace(/\s+/g, " ").trim();
 
 function validIso(s: string | null): string | null {
   if (!s) return null;
@@ -64,9 +70,8 @@ function pruneExpired() {
   const r = db.query("DELETE FROM seen_lines WHERE seen_at < ?").run(cutoff);
   if (r.changes) console.log(`[pipeline] pruned ${r.changes} seen lines older than ${SEEN_LINE_TTL_DAYS} days`);
   const capCutoff = new Date(Date.now() - CAPTURE_RETENTION_DAYS * 86_400_000).toISOString();
-  const gone = db.query("DELETE FROM captures WHERE processed != ? AND captured_at < ? RETURNING id")
-    .all(CaptureStatus.PENDING, capCutoff).length;
-  if (gone) console.log(`[pipeline] deleted ${gone} processed captures older than ${CAPTURE_RETENTION_DAYS} days`);
+  const gone = db.query("DELETE FROM captures WHERE captured_at < ? RETURNING id").all(capCutoff).length;
+  if (gone) console.log(`[pipeline] deleted ${gone} captures older than ${CAPTURE_RETENTION_DAYS} days`);
 }
 
 type Group = {

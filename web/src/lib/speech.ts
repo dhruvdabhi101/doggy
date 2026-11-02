@@ -1,10 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
-/**
- * Voice capture via the browser's built-in speech recognition (Chrome, Edge, Safari incl. iOS).
- * No API key needed. Requires a secure context (https or localhost).
- * Next step: record audio with MediaRecorder and transcribe server-side (Deepgram/Whisper) for higher accuracy.
- */
+/** Voice capture via the browser's built-in speech recognition. Needs a secure context. */
 type Rec = {
   continuous: boolean; interimResults: boolean; lang: string;
   start(): void; stop(): void; abort(): void;
@@ -27,7 +23,7 @@ export function useSpeech(onFinal: (text: string) => void) {
 
   const start = useCallback(() => {
     if (!Ctor) return setError("Voice isn't supported in this browser. Try Chrome or Safari.");
-    if (!window.isSecureContext) return setError("Voice needs HTTPS (or localhost). See README → phone access.");
+    if (!window.isSecureContext) return setError("Voice needs a secure (https) connection.");
     setError(null); setTranscript(""); finalText.current = "";
     const r = new Ctor();
     r.continuous = true; r.interimResults = true; r.lang = navigator.language || "en-US";
