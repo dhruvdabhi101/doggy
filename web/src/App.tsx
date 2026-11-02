@@ -66,7 +66,10 @@ function useItems(onUnauthorized: () => void) {
 
 // ---------------- main shell ----------------
 function Main({ session, onLogout }: { session: Session; onLogout: () => void }) {
-  const [tab, setTab] = useState<Tab>("today");
+  const [tab, setTab] = useState<Tab>(() => {
+    const t = new URLSearchParams(location.search).get("tab");
+    return t === "ask" || t === "memory" || t === "devices" ? t : "today";
+  });
   const { items, upsert } = useItems(onLogout);
   const [toast, setToast] = useState<string | null>(null);
   const [llm, setLlm] = useState<string>("");
@@ -89,6 +92,7 @@ function Main({ session, onLogout }: { session: Session; onLogout: () => void })
         <button className="link small" onClick={onLogout} title={session.user.email}>Sign out</button>
       </header>
       <main>
+        <InstallHint />
         {tab === "today" && <Today items={items} onStatus={setStatus} />}
         {tab === "ask" && <Ask />}
         {tab === "memory" && <Memory items={items} onStatus={setStatus} />}
@@ -280,8 +284,9 @@ function Memory({ items, onStatus }: { items: Item[]; onStatus: (i: Item, s: Ite
 // ---------------- devices ----------------
 function Devices({ llm }: { llm: string }) {
   const [devices, setDevices] = useState<Device[]>([]);
+  const [downloads, setDownloads] = useState<{ mac?: string; windows?: string }>({});
   const load = () => api.devices().then((r) => setDevices(r.devices)).catch(() => {});
-  useEffect(() => { load(); }, []);
+  useEffect(() => { load(); api.downloads().then(setDownloads).catch(() => {}); }, []);
   const origin = location.origin;
   return (
     <section className="devices">
@@ -295,15 +300,34 @@ function Devices({ llm }: { llm: string }) {
         ))}
       </div>
       <div className="group"><h2>Capture from your computer</h2>
-        <p className="muted small">Mac: build <code>agents/mac</code>, grant Accessibility, then:</p>
-        <pre>doggy-agent login --server {origin} --email you@example.com --password •••{"\n"}doggy-agent run</pre>
-        <p className="muted small">Windows: same commands with <code>agents/windows</code> (doggy-agent.exe).</p>
+        <p className="muted small">Install the desktop app, sign in with this account, and Doggy picks up tasks and promises from what's on your screen. Pause it any time from the menu bar / tray.</p>
+        <div className="downloads">
+          {downloads.mac && <a className="primary" href={`/downloads/${downloads.mac}`} download>Download for Mac</a>}
+          {downloads.windows && <a className="primary" href={`/downloads/${downloads.windows}`} download>Download for Windows</a>}
+          {!downloads.mac && !downloads.windows && <span className="muted small">Desktop downloads aren't published on this server yet.</span>}
+        </div>
+        {downloads.mac && <p className="muted small">Mac: open the .dmg, drag Doggy to Applications, then right-click → Open the first time (the build isn't notarized yet). Grant Accessibility when asked.</p>}
+        {downloads.windows && <p className="muted small">Windows: run the .exe; if SmartScreen warns, choose More info → Run anyway. Doggy lives in the system tray.</p>}
       </div>
       <div className="group"><h2>Use with Claude / ChatGPT (MCP)</h2>
         <p className="muted small">Endpoint <code>{origin}/mcp</code> with header <code>Authorization: Bearer &lt;device token&gt;</code>. Tools: search_memory, list_open_loops, remember.</p>
       </div>
       <p className="muted small">Extraction engine: {llm || "…"}</p>
     </section>
+  );
+}
+
+/** iOS Safari has no install prompt; tell people how to add Doggy to the home screen. */
+function InstallHint() {
+  const isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+  const standalone = window.matchMedia("(display-mode: standalone)").matches || (navigator as any).standalone === true;
+  const [hidden, setHidden] = useState(() => { try { return localStorage.getItem("doggy.installHint") === "x"; } catch { return false; } });
+  if (!isIOS || standalone || hidden) return null;
+  return (
+    <div className="install-hint">
+      <span>Install Doggy: tap <b>Share</b> <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2" aria-label="share icon"><path d="M12 3v12M7 8l5-5 5 5M5 12v8h14v-8" /></svg> then <b>Add to Home Screen</b>.</span>
+      <button className="link small" onClick={() => { setHidden(true); try { localStorage.setItem("doggy.installHint", "x"); } catch { /* ignore */ } }}>Dismiss</button>
+    </div>
   );
 }
 

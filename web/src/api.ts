@@ -53,4 +53,5 @@ export const api = {
   ask: (question: string) => call<{ answer: string; sources: Item[] }>("/api/ask", { method: "POST", body: JSON.stringify({ question }) }),
   devices: () => call<{ devices: Device[] }>("/api/devices"),
   removeDevice: (id: string) => call(`/api/devices/${id}`, { method: "DELETE" }),
+  downloads: () => call<{ mac?: string; windows?: string }>("/api/downloads"),
 };

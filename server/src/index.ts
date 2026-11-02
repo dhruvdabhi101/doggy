@@ -165,6 +165,24 @@ app.post("/api/ask", async (c) => {
 app.post("/mcp", handleMcp);
 app.get("/mcp", (c) => c.body(null, 405));
 
+// ---- desktop app downloads (files are uploaded to DOGGY_DOWNLOADS on the server, not kept in git) ----
+const DOWNLOADS = process.env.DOGGY_DOWNLOADS ?? `${import.meta.dir}/../data/downloads`;
+const DOWNLOAD_FILES = { mac: "Doggy-mac.dmg", windows: "Doggy-windows.exe" } as const;
+app.get("/api/downloads", (c) => {
+  const out: Record<string, string> = {};
+  for (const [k, f] of Object.entries(DOWNLOAD_FILES)) if (existsSync(`${DOWNLOADS}/${f}`)) out[k] = f;
+  return c.json(out);
+});
+app.get("/downloads/:file", (c) => {
+  const f = c.req.param("file");
+  if (!Object.values(DOWNLOAD_FILES).includes(f as any) || !existsSync(`${DOWNLOADS}/${f}`)) return c.json({ error: "Not found" }, 404);
+  return c.body(Bun.file(`${DOWNLOADS}/${f}`).stream(), 200, {
+    "content-type": "application/octet-stream",
+    "content-disposition": `attachment; filename="${f}"`,
+    "cache-control": "no-cache",
+  });
+});
+
 // ---- web app (built PWA) ----
 const WEB_DIST = `${import.meta.dir}/../../web/dist`;
 if (existsSync(WEB_DIST)) {

@@ -1,3 +1,47 @@
-{ "name": "Doggy", "short_name": "Doggy", "start_url": "/", "display": "standalone",
-  "background_color": "#f6f3ee", "theme_color": "#f6f3ee",
-  "icons": [{ "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }] }
+{
+  "name": "Doggy",
+  "short_name": "Doggy",
+  "description": "Remembers what you promised and what you were asked to do.",
+  "id": "/",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#f6f3ee",
+  "theme_color": "#f6f3ee",
+  "icons": [
+    {
+      "src": "/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Ask",
+      "url": "/?tab=ask"
+    },
+    {
+      "name": "Memory",
+      "url": "/?tab=memory"
+    }
+  ]
+}

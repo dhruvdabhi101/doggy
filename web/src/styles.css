@@ -113,3 +113,10 @@ blockquote { margin: 6px 0; padding: 6px 10px; border-left: 3px solid var(--line
 
 .toast { position: fixed; left: 50%; transform: translateX(-50%); top: calc(14px + env(safe-area-inset-top)); z-index: 10;
   max-width: calc(100% - 32px); background: var(--text); color: var(--bg); padding: 10px 16px; border-radius: 12px; font-size: 14px; box-shadow: var(--shadow); }
+
+/* desktop downloads + iOS install hint */
+.downloads { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0; }
+a.primary { display: inline-block; text-decoration: none; }
+.install-hint { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 8px 0;
+  padding: 10px 12px; border-radius: 12px; background: var(--surface-2); font-size: 14px; }
+.install-hint svg { vertical-align: -2px; }
