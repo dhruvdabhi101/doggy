@@ -26,8 +26,45 @@ into the same account sees the same data (server is the source of truth in the M
     "capturedAt": "2026-11-02T10:00:00Z"
 } ] }
 ```
-Response: `{accepted: <n>}`. Agents batch events and POST every ~20s. Max 200 events / 500 KB per request.
-Server groups capture text into episodes per (device, app, window) and runs extraction in the background.
+Response: `{accepted: <n>, deduped: <n>}`. Agents batch events and POST every ~20s. Max 200 events / 500 KB per
+request. The server drops lines it already stored for the same source (app bundle id, or URL host plus a known path
+such as `x.com/messages`) in the last 30 days, and stores only the new lines. `deduped` counts events with no new
+line, which are not stored. The server groups captures into episodes per (device, source, window) and extracts them
+in the background by lane. See [CAPTURE_PIPELINE.md](CAPTURE_PIPELINE.md).
+
+## Sources
+Which apps and sites Doggy reads, and how soon. A source appears after the worker first sees it.
+
+| Method | Path | Body | Response |
+|---|---|---|---|
+| GET | `/api/sources` | – | `{sources:[Source]}`, most recently seen first |
+| PUT | `/api/sources/:key` | `{lane: "fast"\|"slow"\|"skip"\|null}` | `{source: Source\|null}`. `null` clears the override. Other values → 400 |
+
+```ts
+type Lane = "fast" | "slow" | "skip";
+type Source = {
+  key: string;                // "web.whatsapp.com", "x.com/messages", "com.tinyspeck.slackmacgap"
+  kind: "conversation" | "document" | "feed" | "own" | "unknown";
+  defaultLane: Lane;          // from the kind
+  lane: Lane;                 // what the worker uses now
+  laneWhy: "override" | "adaptive" | "default";
+  override: Lane | null;      // the user's choice, if any
+  episodes: number;           // episodes extracted so far
+  itemsKept: number;          // items created from them
+  lastSeenAt: string | null;
+}
+```
+URL-encode the key in the path (`/api/sources/x.com%2Fmessages`).
+
+## Usage
+`GET /api/usage` → model usage for this user, today (UTC) and the last 7 days.
+```json
+{ "today": { "day": "2026-11-02", "captureInputTokens": 41200, "capped": null },
+  "caps": { "userDailyInputTokens": 300000, "globalDailyInputTokens": 3000000 },
+  "days": [ { "day": "2026-11-02", "kind": "capture", "calls": 12, "inputTokens": 41200, "outputTokens": 9100 } ] }
+```
+`capped` is `"user"`, `"global"` or `null`. While capped, screen captures are skipped until 00:00 UTC. Notes and ask
+still work. `kind` is `capture`, `voice`, `text` or `ask`. Without an API key, calls are counted with 0 tokens.
 
 ## Notes (voice / text from any client)
 `POST /api/notes` `{text, source: "voice"|"text"}` → `{note:{id}, items:[Item]}` (extraction is synchronous here).
