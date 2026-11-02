@@ -34,7 +34,8 @@ CREATE TABLE IF NOT EXISTS items (
   status TEXT NOT NULL DEFAULT 'open', evidence TEXT,
   source_kind TEXT NOT NULL, source_app TEXT, source_window TEXT, source_id TEXT,
   confidence REAL NOT NULL DEFAULT 0.5,
-  created_at TEXT NOT NULL, updated_at TEXT NOT NULL, seq INTEGER NOT NULL
+  created_at TEXT NOT NULL, updated_at TEXT NOT NULL, seq INTEGER NOT NULL,
+  title_key TEXT, evidence_key TEXT
 );
 CREATE INDEX IF NOT EXISTS items_user_seq ON items(user_id, seq);
 CREATE TABLE IF NOT EXISTS counters (name TEXT PRIMARY KEY, value INTEGER NOT NULL);
@@ -63,6 +64,45 @@ END;
 
 export const now = () => new Date().toISOString();
 export const uid = () => crypto.randomUUID();
+
+/** Lowercase, one space. The key used to notice an item we already stored. */
+export function textKey(s: string | null | undefined): string | null {
+  if (!s) return null;
+  const k = s.toLowerCase().replace(/\s+/g, " ").trim();
+  return k.length ? k : null;
+}
+
+for (const sql of [
+  "ALTER TABLE items ADD COLUMN title_key TEXT",
+  "ALTER TABLE items ADD COLUMN evidence_key TEXT",
+]) {
+  try { db.exec(sql); } catch (e) {
+    if (!/duplicate column/i.test((e as Error).message)) throw e;
+  }
+}
+db.exec(`
+CREATE INDEX IF NOT EXISTS items_title_key ON items(user_id, title_key);
+CREATE INDEX IF NOT EXISTS items_evidence_key ON items(user_id, evidence_key);
+`);
+{
+  const pending = db.query(
+    "SELECT id, title, evidence FROM items WHERE title_key IS NULL OR (evidence IS NOT NULL AND evidence_key IS NULL)",
+  ).all() as { id: string; title: string; evidence: string | null }[];
+  const fill = db.query("UPDATE items SET title_key = ?, evidence_key = ? WHERE id = ?");
+  for (const r of pending) fill.run(textKey(r.title), textKey(r.evidence), r.id);
+}
+
+/** True when this user already has an item with this title, or with this quote. Indexed lookups, any status. */
+export function itemKeyTaken(userId: string, title: string, evidence: string | null): boolean {
+  const titleKey = textKey(title);
+  const evidenceKey = textKey(evidence);
+  if (evidenceKey && evidenceKey.length >= 12) {
+    const hit = db.query("SELECT 1 AS n FROM items WHERE user_id = ? AND evidence_key = ? LIMIT 1").get(userId, evidenceKey);
+    if (hit) return true;
+  }
+  if (!titleKey) return false;
+  return !!db.query("SELECT 1 AS n FROM items WHERE user_id = ? AND title_key = ? LIMIT 1").get(userId, titleKey);
+}
 
 export function nextSeq(): number {
   const row = db.query("UPDATE counters SET value = value + 1 WHERE name = 'seq' RETURNING value").get() as {
@@ -100,12 +140,12 @@ export function insertItem(userId: string, it: NewItem): Item {
   const id = uid(); const t = now();
   db.query(
     `INSERT INTO items (id,user_id,type,title,details,owner,counterparty,due_at,status,evidence,
-      source_kind,source_app,source_window,source_id,confidence,created_at,updated_at,seq)
-     VALUES (?,?,?,?,?,?,?,?,'open',?,?,?,?,?,?,?,?,?)`,
+      source_kind,source_app,source_window,source_id,confidence,created_at,updated_at,seq,title_key,evidence_key)
+     VALUES (?,?,?,?,?,?,?,?,'open',?,?,?,?,?,?,?,?,?,?,?)`,
   ).run(
     id, userId, it.type, it.title, it.details ?? null, it.owner ?? null, it.counterparty ?? null,
     it.dueAt ?? null, it.evidence ?? null, it.sourceKind, it.sourceApp ?? null, it.sourceWindow ?? null,
-    it.sourceId ?? null, it.confidence ?? 0.5, t, t, nextSeq(),
+    it.sourceId ?? null, it.confidence ?? 0.5, t, t, nextSeq(), textKey(it.title), textKey(it.evidence),
   );
   return getItem(userId, id)!;
 }
@@ -125,13 +165,13 @@ export function updateItem(userId: string, id: string, patch: ItemPatch): Item |
   if (!cur) return null;
   const pick = <K extends keyof ItemPatch>(k: K, fallback: unknown) => (patch[k] === undefined ? fallback : patch[k]);
   db.query(
-    `UPDATE items SET status=?, title=?, type=?, due_at=?, details=?, owner=?, counterparty=?, updated_at=?, seq=?
+    `UPDATE items SET status=?, title=?, type=?, due_at=?, details=?, owner=?, counterparty=?, updated_at=?, seq=?, title_key=?
      WHERE id=? AND user_id=?`,
   ).run(
     pick("status", cur.status) as string, pick("title", cur.title) as string, pick("type", cur.type) as string,
     pick("dueAt", cur.dueAt) as string | null, pick("details", cur.details) as string | null,
     pick("owner", cur.owner) as string | null, pick("counterparty", cur.counterparty) as string | null,
-    now(), nextSeq(), id, userId,
+    now(), nextSeq(), textKey(pick("title", cur.title) as string), id, userId,
   );
   return getItem(userId, id);
 }

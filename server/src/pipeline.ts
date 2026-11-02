@@ -1,4 +1,4 @@
-import { db, insertItem, openItems, updateItem, searchItems, type Item } from "./db";
+import { db, insertItem, itemKeyTaken, openItems, updateItem, searchItems, type Item } from "./db";
 import { extract, type ExtractInput } from "./llm";
 
 type UserCtx = { id: string; email: string; name: string | null; tz: string };
@@ -19,8 +19,7 @@ export async function processSource(
   const created: Item[] = [];
   for (const it of out.items) {
     if (it.confidence < MIN_CONFIDENCE[src.kind]) continue;
-    const dup = existing.find((e) => e.title.toLowerCase() === it.title.toLowerCase());
-    if (dup) continue;
+    if (itemKeyTaken(user.id, it.title, it.evidence)) continue;
     created.push(insertItem(user.id, {
       type: it.type, title: it.title, details: it.details, owner: it.owner, counterparty: it.counterparty,
       dueAt: validIso(it.due_at), evidence: it.evidence, sourceKind: src.kind, sourceApp: src.app ?? null,
@@ -32,6 +31,17 @@ export async function processSource(
     console.log(`[pipeline] closed ${c.item_id}: ${c.evidence.slice(0, 80)}`);
   }
   return created;
+}
+
+const OWN_HOSTS = new Set(["doggy.ruv.world", "localhost", "127.0.0.1"]);
+
+function ownAppUrl(url: string): boolean {
+  try {
+    const host = new URL(url).hostname.toLowerCase();
+    return OWN_HOSTS.has(host) || host === process.env.DOGGY_PUBLIC_HOST?.toLowerCase();
+  } catch {
+    return false;
+  }
 }
 
 function validIso(s: string | null): string | null {
@@ -63,6 +73,15 @@ export async function processPendingCaptures() {
          ORDER BY id`,
       ).all(g.user_id, g.device_id, g.app, g.window) as { id: number; text: string; url: string | null }[];
       const ids = rows.map((r) => r.id);
+      const markProcessed = () =>
+        db.query(`UPDATE captures SET processed = 1 WHERE id IN (${ids.map(() => "?").join(",")})`).run(...ids);
+      // The page is our own list. Extracting it saves a second copy of items we already have.
+      const urls = rows.map((r) => r.url).filter((u): u is string => !!u);
+      if (urls.length > 0 && urls.every(ownAppUrl)) {
+        markProcessed();
+        console.log(`[pipeline] skip ${g.app} / ${g.window}: own page`);
+        continue;
+      }
       const text = rows.map((r) => r.text).join("\n").slice(-MAX_CHARS);
       const user = db.query("SELECT id, email, name, tz FROM users WHERE id = ?").get(g.user_id) as UserCtx;
       try {
@@ -73,7 +92,7 @@ export async function processPendingCaptures() {
           });
           if (made.length) console.log(`[pipeline] ${g.app} / ${g.window}: +${made.length} items`);
         }
-        db.query(`UPDATE captures SET processed = 1 WHERE id IN (${ids.map(() => "?").join(",")})`).run(...ids);
+        markProcessed();
       } catch (e) {
         console.error(`[pipeline] extraction failed for ${g.app}/${g.window}:`, (e as Error).message);
         // leave unprocessed; retried next tick
