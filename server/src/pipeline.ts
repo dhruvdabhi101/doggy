@@ -1,5 +1,7 @@
 import { db, insertItem, itemKeyTaken, openItems, updateItem, searchItems, type Item } from "./db";
 import { extract, type ExtractInput } from "./llm";
+import { classify } from "./sources";
+import { SEEN_LINE_TTL_DAYS } from "./capture";
 
 type UserCtx = { id: string; email: string; name: string | null; tz: string };
 
@@ -33,17 +35,6 @@ export async function processSource(
   return created;
 }
 
-const OWN_HOSTS = new Set(["doggy.ruv.world", "localhost", "127.0.0.1"]);
-
-function ownAppUrl(url: string): boolean {
-  try {
-    const host = new URL(url).hostname.toLowerCase();
-    return OWN_HOSTS.has(host) || host === process.env.DOGGY_PUBLIC_HOST?.toLowerCase();
-  } catch {
-    return false;
-  }
-}
-
 function validIso(s: string | null): string | null {
   if (!s) return null;
   const d = new Date(s);
@@ -57,10 +48,22 @@ let running = false;
 
 type Group = { user_id: string; device_id: string; app: string; window: string; last: string; chars: number };
 
+const PRUNE_EVERY_MS = 60 * 60_000;
+let lastPrune = 0;
+
+function pruneSeenLines() {
+  if (Date.now() - lastPrune < PRUNE_EVERY_MS) return;
+  lastPrune = Date.now();
+  const cutoff = new Date(Date.now() - SEEN_LINE_TTL_DAYS * 86_400_000).toISOString();
+  const r = db.query("DELETE FROM seen_lines WHERE seen_at < ?").run(cutoff);
+  if (r.changes) console.log(`[pipeline] pruned ${r.changes} seen lines older than ${SEEN_LINE_TTL_DAYS} days`);
+}
+
 export async function processPendingCaptures() {
   if (running) return;
   running = true;
   try {
+    pruneSeenLines();
     const groups = db.query(
       `SELECT user_id, device_id, app, window, MAX(captured_at) AS last, SUM(LENGTH(text)) AS chars
        FROM captures WHERE processed = 0 GROUP BY user_id, device_id, app, window`,
@@ -77,7 +80,7 @@ export async function processPendingCaptures() {
         db.query(`UPDATE captures SET processed = 1 WHERE id IN (${ids.map(() => "?").join(",")})`).run(...ids);
       // The page is our own list. Extracting it saves a second copy of items we already have.
       const urls = rows.map((r) => r.url).filter((u): u is string => !!u);
-      if (urls.length > 0 && urls.every(ownAppUrl)) {
+      if (urls.length > 0 && urls.every((url) => classify({ app: g.app, url }).kind === "own")) {
         markProcessed();
         console.log(`[pipeline] skip ${g.app} / ${g.window}: own page`);
         continue;

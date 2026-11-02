@@ -1,6 +1,8 @@
 import { Database } from "bun:sqlite";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
+import { CaptureStatus } from "./capture";
+import { classify } from "./sources";
 
 const DB_PATH = process.env.DOGGY_DB ?? `${import.meta.dir}/../data/doggy.db`;
 mkdirSync(dirname(DB_PATH), { recursive: true });
@@ -75,6 +77,9 @@ export function textKey(s: string | null | undefined): string | null {
 for (const sql of [
   "ALTER TABLE items ADD COLUMN title_key TEXT",
   "ALTER TABLE items ADD COLUMN evidence_key TEXT",
+  "ALTER TABLE captures ADD COLUMN source_key TEXT",
+  "ALTER TABLE captures ADD COLUMN source_kind TEXT",
+  "ALTER TABLE captures ADD COLUMN skip_reason TEXT",
 ]) {
   try { db.exec(sql); } catch (e) {
     if (!/duplicate column/i.test((e as Error).message)) throw e;
@@ -83,7 +88,23 @@ for (const sql of [
 db.exec(`
 CREATE INDEX IF NOT EXISTS items_title_key ON items(user_id, title_key);
 CREATE INDEX IF NOT EXISTS items_evidence_key ON items(user_id, evidence_key);
+CREATE INDEX IF NOT EXISTS captures_pending_source ON captures(processed, user_id, device_id, source_key, window);
+CREATE TABLE IF NOT EXISTS seen_lines (
+  user_id TEXT NOT NULL, scope TEXT NOT NULL, hash TEXT NOT NULL, seen_at TEXT NOT NULL,
+  PRIMARY KEY (user_id, scope, hash)
+) WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS seen_lines_age ON seen_lines(seen_at);
 `);
+{
+  const pending = db.query(
+    "SELECT id, app, bundle_id, url FROM captures WHERE processed = ? AND source_key IS NULL",
+  ).all(CaptureStatus.PENDING) as { id: number; app: string; bundle_id: string | null; url: string | null }[];
+  const fill = db.query("UPDATE captures SET source_key = ?, source_kind = ? WHERE id = ?");
+  for (const r of pending) {
+    const s = classify({ app: r.app, bundleId: r.bundle_id, url: r.url });
+    fill.run(s.key, s.kind, r.id);
+  }
+}
 {
   const pending = db.query(
     "SELECT id, title, evidence FROM items WHERE title_key IS NULL OR (evidence IS NOT NULL AND evidence_key IS NULL)",

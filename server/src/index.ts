@@ -10,6 +10,8 @@ import {
 import { answer, hasLLM, MODEL, MODEL_FAST, ITEM_TYPES } from "./llm";
 import { processPendingCaptures, processSource } from "./pipeline";
 import { handleMcp } from "./mcp";
+import { filterNewLines } from "./capture";
+import { classify } from "./sources";
 
 const app = new Hono<AuthEnv>();
 app.use("/api/*", cors());
@@ -44,24 +46,43 @@ app.delete("/api/devices/:id", (c) => {
 
 // ---- capture from desktop agents ----
 const MAX_EVENTS = 200;
+type CaptureEvent = { app: string; bundleId: string | null; window: string; url: string | null; text: string; capturedAt: string };
+
+function parseCaptureEvent(e: any): CaptureEvent | null {
+  const text = typeof e?.text === "string" ? e.text.slice(0, 50_000).trim() : "";
+  if (!text || typeof e.app !== "string") return null;
+  const str = (v: unknown, max: number) => (typeof v === "string" && v ? v.slice(0, max) : null);
+  const at = typeof e.capturedAt === "string" && !Number.isNaN(Date.parse(e.capturedAt)) ? e.capturedAt : now();
+  return {
+    app: e.app.slice(0, 200), bundleId: str(e.bundleId, 200), window: String(e.window ?? "").slice(0, 500),
+    url: str(e.url, 2000), text, capturedAt: at,
+  };
+}
+
 app.post("/api/capture", async (c) => {
-  const body = (await c.req.json().catch(() => null)) as { events?: any[] } | null;
-  const events = Array.isArray(body?.events) ? body!.events.slice(0, MAX_EVENTS) : [];
+  const body = (await c.req.json().catch(() => null)) as { events?: unknown[] } | null;
+  const events = (Array.isArray(body?.events) ? body!.events.slice(0, MAX_EVENTS) : [])
+    .map(parseCaptureEvent).filter((e): e is CaptureEvent => !!e);
   const user = c.get("user"); const device = c.get("device");
   const ins = db.query(
-    "INSERT INTO captures (user_id,device_id,app,bundle_id,window,url,text,captured_at) VALUES (?,?,?,?,?,?,?,?)",
+    `INSERT INTO captures (user_id,device_id,app,bundle_id,window,url,text,captured_at,source_key,source_kind)
+     VALUES (?,?,?,?,?,?,?,?,?,?)`,
   );
-  let accepted = 0;
+  const isSeen = db.query("SELECT 1 FROM seen_lines WHERE user_id = ? AND scope = ? AND hash = ?");
+  const remember = db.query("INSERT OR IGNORE INTO seen_lines (user_id, scope, hash, seen_at) VALUES (?,?,?,?)");
+  let accepted = 0; let deduped = 0;
   db.transaction(() => {
+    const t = now();
     for (const e of events) {
-      const text = typeof e?.text === "string" ? e.text.slice(0, 50_000).trim() : "";
-      if (!text || typeof e.app !== "string") continue;
-      ins.run(user.id, device.id, e.app.slice(0, 200), e.bundleId ?? null, String(e.window ?? "").slice(0, 500),
-        e.url ?? null, text, typeof e.capturedAt === "string" ? e.capturedAt : now());
+      const source = classify(e);
+      const kept = filterNewLines(e.text, (h) => !!isSeen.get(user.id, source.key, h));
+      if (!kept.newHashes.length) { deduped++; continue; }
+      for (const h of kept.newHashes) remember.run(user.id, source.key, h, t);
+      ins.run(user.id, device.id, e.app, e.bundleId, e.window, e.url, kept.lines.join("\n"), e.capturedAt, source.key, source.kind);
       accepted++;
     }
   })();
-  return c.json({ accepted });
+  return c.json({ accepted, deduped });
 });
 
 // ---- notes (voice / text) ----
