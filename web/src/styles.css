@@ -77,7 +77,8 @@ pre { background: var(--surface-2); padding: 12px; border-radius: 10px; overflow
 .count { font-weight: 500; opacity: 0.7; margin-left: 4px; }
 .item { display: flex; gap: 12px; padding: 12px; margin-bottom: 8px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); }
 .item.done .title { text-decoration: line-through; color: var(--muted); }
-.check { flex: none; width: 24px; height: 24px; margin-top: 1px; border-radius: 50%; border: 2px solid var(--line); color: var(--accent-ink); font-size: 13px; font-weight: 700; display: grid; place-items: center; }
+/* UA button padding is 1px 6px. Inside a 24px border-box with a 2px border that leaves an 8px-wide content box, so the tick overflows and sits about 2px right of center. */
+.check { flex: none; width: 24px; height: 24px; margin-top: 1px; padding: 0; border-radius: 50%; border: 2px solid var(--line); color: var(--accent-ink); font-size: 13px; font-weight: 700; display: grid; place-items: center; }
 .check:hover { border-color: var(--accent); }
 .check.on { background: var(--ok); border-color: var(--ok); }
 .body { flex: 1; min-width: 0; cursor: pointer; }
