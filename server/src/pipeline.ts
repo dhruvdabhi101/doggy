@@ -4,9 +4,9 @@ import {
 import { extract, type ExtractInput, type ExtractSource } from "./llm";
 import { type Source, type SourceKind } from "./sources";
 import { laneFor, recordSourceStats } from "./lanes";
-import { captureCapHit, recordUsage, utcDay } from "./usage";
+import { recordUsage } from "./usage";
 import {
-  CaptureStatus, EPISODE_MAX_CHARS, MIN_EPISODE_CHARS, SEEN_LINE_TTL_DAYS, isReady, packEpisodes, type SkipReason,
+  CAPTURE_RETENTION_DAYS, CaptureStatus, EPISODE_MAX_CHARS, MIN_EPISODE_CHARS, SEEN_LINE_TTL_DAYS, isReady, packEpisodes, type SkipReason,
 } from "./capture";
 
 type UserCtx = { id: string; email: string; name: string | null; tz: string };
@@ -57,12 +57,16 @@ const PRUNE_EVERY_MS = 60 * 60_000;
 let lastPrune = 0;
 let running = false;
 
-function pruneSeenLines() {
+function pruneExpired() {
   if (Date.now() - lastPrune < PRUNE_EVERY_MS) return;
   lastPrune = Date.now();
   const cutoff = new Date(Date.now() - SEEN_LINE_TTL_DAYS * 86_400_000).toISOString();
   const r = db.query("DELETE FROM seen_lines WHERE seen_at < ?").run(cutoff);
   if (r.changes) console.log(`[pipeline] pruned ${r.changes} seen lines older than ${SEEN_LINE_TTL_DAYS} days`);
+  const capCutoff = new Date(Date.now() - CAPTURE_RETENTION_DAYS * 86_400_000).toISOString();
+  const gone = db.query("DELETE FROM captures WHERE processed != ? AND captured_at < ? RETURNING id")
+    .all(CaptureStatus.PENDING, capCutoff).length;
+  if (gone) console.log(`[pipeline] deleted ${gone} processed captures older than ${CAPTURE_RETENTION_DAYS} days`);
 }
 
 type Group = {
@@ -94,7 +98,7 @@ export async function processPendingCaptures() {
   if (running) return;
   running = true;
   try {
-    pruneSeenLines();
+    pruneExpired();
     const groups = db.query(
       `SELECT user_id, device_id, source_key, source_kind, window, MIN(captured_at) AS first, MAX(captured_at) AS last,
          SUM(LENGTH(text)) AS chars
@@ -121,21 +125,10 @@ export async function processPendingCaptures() {
   }
 }
 
-const capLogged = new Map<string, string>();
-
 async function extractForUser(userId: string, eps: Episode[]) {
   const user = db.query("SELECT id, email, name, tz FROM users WHERE id = ?").get(userId) as UserCtx;
   const packs = packEpisodes(eps);
   for (const pack of packs) {
-    const cap = captureCapHit(userId);
-    if (cap) {
-      for (const ep of pack) markCaptures(ep.ids, CaptureStatus.SKIPPED, "budget");
-      if (capLogged.get(userId) !== utcDay()) {
-        capLogged.set(userId, utcDay());
-        console.warn(`[pipeline] user ${userId}: ${cap} daily capture token cap reached; skipping captures until 00:00 UTC`);
-      }
-      continue;
-    }
     try {
       const created = await processSources(user, "capture", pack.map((ep) => ({
         app: ep.app, window: ep.window, url: ep.url, text: ep.text, sourceId: `capture:${ep.ids.at(-1)}`,

@@ -14,7 +14,7 @@ server/            Bun + Hono + bun:sqlite. API, extraction pipeline, MCP, serve
   src/capture.ts   pure capture rules: line fingerprints, capture status, lane readiness, packing
   src/sources.ts   pure source registry: rule table, classify(), kind default lanes, resolveLane()
   src/lanes.ts     per-user lane overrides and source stats (source_prefs, source_stats)
-  src/usage.ts     llm_usage ledger, daily capture caps, /api/usage report
+  src/usage.ts     llm_usage ledger, /api/usage report
   src/mcp.ts       minimal MCP JSON-RPC server (initialize, tools/list, tools/call)
   scripts/replay.ts  replays a DB copy through the capture gates; prints old vs new calls (no model calls)
 web/               Vite + React PWA (single page). src/App.tsx = all screens, src/speech.ts = voice
@@ -25,7 +25,7 @@ docs/              PLAN.md, TECHNICAL.md, API.md
 
 ## Data flow
 ```
-desktop agent ──POST /api/capture──▶ seen-line dedupe ──▶ captures ──(worker: lanes, budget, batching)──┐
+desktop agent ──POST /api/capture──▶ seen-line dedupe ──▶ captures ──(worker: lanes, batching)────────┐
 web/phone note ─POST /api/notes────▶ notes table ──(synchronous)─────────────────────────────────────┤
 MCP "remember" ─────────────────────▶ notes table ───────────────────────────────────────────────────┤
                                                                                                       ▼
@@ -43,8 +43,8 @@ clients ◀── GET /api/changes?since=seq (incremental) / /api/items / /api/s
   the last 30 days. The source is a bundle id or URL host, never a window title. The worker groups pending captures
   into episodes per (user, device, source, window). Each source has a lane: chats are fast (45s of quiet), documents
   and unknown apps are slow (flushed together when the clock hour ends), feeds and our own site are skipped with no call. Ready
-  episodes of one user are packed into one call of up to ~24k chars. Capture extraction has a per-user and a global
-  daily input-token cap. Failed extractions stay pending and are retried on the next tick. Details and tradeoffs are in
+  episodes of one user are packed into one call of up to ~24k chars. Usage is recorded, never capped. Processed
+  screen text is deleted after 30 days. Failed extractions stay pending and are retried on the next tick. Details and tradeoffs are in
   [CAPTURE_PIPELINE.md](CAPTURE_PIPELINE.md).
 - **No keyword gating.** Whether text reaches the model depends on its source and whether it is new, never on its
   words. The model decides what is a task.
@@ -77,8 +77,7 @@ clients ◀── GET /api/changes?since=seq (incremental) / /api/items / /api/s
 | `DOGGY_DB` | `server/data/doggy.db` | SQLite path |
 | `DOGGY_EPISODE_IDLE_MS` | `45000` | Fast lane: quiet time before a chat episode is extracted |
 | `DOGGY_SLOW_LANE_MS` | `3600000` | Slow lane: length of the clock-aligned window. All slow episodes a user starts in one window are extracted together when it ends |
-| `DOGGY_USER_DAILY_INPUT_TOKENS` | `300000` | Per-user daily input-token cap on capture extraction (UTC day) |
-| `DOGGY_GLOBAL_DAILY_INPUT_TOKENS` | `3000000` | Daily input-token cap on capture extraction across all users |
+| `DOGGY_CAPTURE_RETENTION_DAYS` | `30` | Processed screen text older than this is deleted hourly |
 | `DOGGY_PUBLIC_HOST` | – | Extra host treated as our own site; its captures are skipped |
 | `PORT` / `HOST` | `8787` / `0.0.0.0` | Listen address |
 
@@ -104,7 +103,6 @@ clients ◀── GET /api/changes?since=seq (incremental) / /api/items / /api/s
   The heuristic fallback uses server-local time.
 - A window title that changes (unread counters) still starts a new episode, but its re-sent lines are dropped at
   ingest. A long line seen in one chat is also dropped in another chat of the same app.
-- Hitting the daily capture cap is only visible in `GET /api/usage` and the server log. The web app does not show it.
 - Slow-lane sources (documents, unknown apps) can take up to an hour to produce items.
 - Feeds are skipped by default, so a real request in an X reply or YouTube comment is missed unless the user turns
   that source on.

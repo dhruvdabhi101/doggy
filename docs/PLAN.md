@@ -33,8 +33,8 @@ voice/text notes, and answer questions.
       with server-side refusal fallback; rule-based fallback when no key.
 - [x] Episode batching: screen text grouped per (device, app, window), processed after 45s idle or 12k chars.
 - [x] Capture cost gates (2026-11-02): server-side seen-line dedupe per source, source registry with fast/slow/skip
-      lanes and per-user overrides (Devices → Sources), batched extraction per user tick, daily token caps, usage
-      ledger, near-duplicate guard, and `bun run replay` to measure it. See CAPTURE_PIPELINE.md.
+      lanes and per-user overrides (Devices → Sources), batched extraction per user tick, usage
+      ledger, 30-day expiry of processed screen text, near-duplicate guard, and `bun run replay` to measure it. See CAPTURE_PIPELINE.md.
       **Verified** on a throwaway DB (heuristic and real-key runs). **Not yet measured on production captures.**
 - [x] Web app/PWA: open loops grouped by due date (overdue/today/week/later), mark done/dismiss, evidence and source
       on tap, Ask (cited answers), Memory (search + filters + matching screen text), Devices, voice and text composer.
@@ -97,5 +97,8 @@ voice/text notes, and answer questions.
   (keyword gating like `TASK_RE` was rejected as brittle). Observed that day: 604 capture events from one Mac in two
   hours led to about 143 Haiku calls and 4 kept tasks, mostly from X, YouTube and WhatsApp Web. The server now drops
   lines it already stored per source, skips feeds and our own site, reads documents hourly, batches ready episodes per
-  user, and caps capture input tokens per user (300k/day) and globally (3M/day). Server-only, so desktop agents need
+  user, and records token usage. Server-only, so desktop agents need
   no new release.
+- 2026-11-02: No daily token cap. A cap silently stops new screen tasks for the rest of the day, which is worse for
+  users than the cost. Usage is still recorded. Processed screen text expires after 30 days so the database stays
+  small. Items keep their quotes, so dedupe is unaffected.

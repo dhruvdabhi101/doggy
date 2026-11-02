@@ -32,10 +32,9 @@ worker every 10s ◀────────────────────
   group pending captures into episodes per (user, device, source key, window)
   lane per source: user override, else adaptive demotion, else kind default
   skip lane            ─▶ SKIPPED (own, feed, user_off), no call
-  fast or slow, ready  ─▶ budget left? no ─▶ SKIPPED (budget)
-                                     yes ─▶ pack the user's ready episodes into calls of ~24k chars
-                                            ─▶ one extract() per pack ─▶ item guards ─▶ items
-                                            ─▶ llm_usage and source_stats updated
+  fast or slow, ready  ─▶ pack the user's ready episodes into calls of ~24k chars
+                       ─▶ one extract() per pack ─▶ item guards ─▶ items
+                       ─▶ llm_usage and source_stats updated
 ```
 
 The agents did not change. Everything here runs on the server.
@@ -90,25 +89,24 @@ The lane of a source is decided in this order.
 `source_stats` counts extracted episodes, chars sent and items kept per user and source. Skipped episodes write a
 row with zero counts, so feeds still appear in the Sources list and a user can turn one on.
 
-### 4. Daily budget
+### 4. Usage ledger
 
 Every model call records its usage in `llm_usage` per UTC day, user and kind (`capture`, `voice`, `text`, `ask`).
 Input tokens include cache writes and cache reads.
 
-Before each capture call the worker checks two caps.
+There is no daily cap. A cap would make new screen tasks silently stop for the rest of the day, which is worse for
+users than the cost it saves. Spend is controlled by the gates above and watched through the ledger. Check it with
+`GET /api/usage` per user, or sum `llm_usage` on the server for everyone.
 
-- `DOGGY_USER_DAILY_INPUT_TOKENS` (default 300,000) for this user's capture extraction today.
-- `DOGGY_GLOBAL_DAILY_INPUT_TOKENS` (default 3,000,000) for capture extraction across all users today.
+### Screen text retention
 
-When either is reached, captures that become ready are marked SKIPPED with reason `budget` until 00:00 UTC. The
-server logs this once per user per day. The cap is checked before a call, so the last call of the day can overshoot
-by its own size. Voice notes, typed notes, MCP `remember` and ask are never blocked.
+Processed captures (done or skipped) are deleted after `DOGGY_CAPTURE_RETENTION_DAYS` (default 30). The worker runs
+the delete once an hour, together with the fingerprint prune. Pending captures are never deleted. A delete trigger
+keeps the capture search index in step.
 
-What a user sees today is no new screen items for the rest of the day. `GET /api/usage` returns `today.capped`, but
-the web app does not show it yet.
-
-At Haiku 5.5 prices ($0.10 per million input tokens, $0.50 per million output), the global input cap is $0.30 a day
-of input. Output tokens are recorded but not capped.
+Items are not affected. Each item keeps its own title and evidence quote, so the exact title and quote checks and
+the near-duplicate guard keep working after the screen text that produced the item is gone. What is lost is Ask's
+search over screen text older than the window, and the source link on an item older than the window.
 
 ### 5. Batched extraction
 
@@ -146,7 +144,7 @@ The prompt also lists the 15 most recently done items as "recently completed; do
 |---|---|---|
 | 0 | PENDING | Waiting for its episode to be ready. A failed call leaves it here for the next tick |
 | 1 | DONE | Extracted, or too short to extract (under 20 chars) |
-| 2 | SKIPPED | Never sent. `skip_reason` is `own`, `feed`, `user_off` or `budget` |
+| 2 | SKIPPED | Never sent. `skip_reason` is `own`, `feed` or `user_off` |
 
 Rows from before this change hold only 0 or 1. Pending rows get their source key filled in on boot.
 
@@ -172,8 +170,7 @@ Rows from before this change hold only 0 or 1. Pending rows get their source key
 |---|---|---|
 | Fast lane quiet time | `DOGGY_EPISODE_IDLE_MS` | 45000 |
 | Slow lane age | `DOGGY_SLOW_LANE_MS` | 3600000 |
-| Per-user daily capture input tokens | `DOGGY_USER_DAILY_INPUT_TOKENS` | 300000 |
-| Global daily capture input tokens | `DOGGY_GLOBAL_DAILY_INPUT_TOKENS` | 3000000 |
+| Days processed screen text is kept | `DOGGY_CAPTURE_RETENTION_DAYS` | 30 |
 | Source rules and kind defaults | `RULES`, `KIND_LANE` in `server/src/sources.ts` | table above |
 | Demotion threshold | `DEMOTE_AFTER_EPISODES` in `sources.ts` | 30 |
 | Short-line cutoff, seen window | `MIN_FINGERPRINT_CHARS`, `SEEN_LINE_TTL_DAYS` in `capture.ts` | 8, 30 |
@@ -198,7 +195,7 @@ It prints raw events, events left after dedupe, episodes per lane, model calls a
 and the new one, a per-source table, and one line per kept capture item. That line says whether the new pipeline
 would still extract the item's episode, or would skip it (feed, own, user off) or drop it as already seen.
 
-Approximations. The worker tick is a 10s bucket. Adaptive demotion and budget caps are not modelled. Current user
+Approximations. The worker tick is a 10s bucket. Adaptive demotion is not modelled. Current user
 overrides apply to all history. A database written by the new server already holds deduped captures, so its
 "after dedupe" count equals the raw count.
 
@@ -228,4 +225,4 @@ All three real tasks from WhatsApp are still extracted. The fourth kept item cam
 
 Clock-aligned slow windows did most of the call reduction. Before them, each slow episode became ready 60 minutes after its own first capture, so slow episodes rarely shared a call, and the same data needed 121 calls. Every call also carries the system prompt and the user's open and recently done items, so fewer calls cut tokens even when the source text is the same.
 
-The replay does not model adaptive demotion or the budget caps.
+The replay does not model adaptive demotion.

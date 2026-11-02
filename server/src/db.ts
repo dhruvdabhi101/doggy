@@ -62,6 +62,9 @@ CREATE VIRTUAL TABLE IF NOT EXISTS captures_fts USING fts5(
 CREATE TRIGGER IF NOT EXISTS captures_ai AFTER INSERT ON captures BEGIN
   INSERT INTO captures_fts(rowid, app, window, text) VALUES (new.id, new.app, new.window, new.text);
 END;
+CREATE TRIGGER IF NOT EXISTS captures_ad AFTER DELETE ON captures BEGIN
+  INSERT INTO captures_fts(captures_fts, rowid, app, window, text) VALUES ('delete', old.id, old.app, old.window, old.text);
+END;
 `);
 
 export const now = () => new Date().toISOString();

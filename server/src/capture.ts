@@ -7,11 +7,13 @@ import type { Lane } from "./sources";
 
 /** Values of captures.processed. Rows written before 2026-11-02 only ever hold 0 or 1. */
 export const CaptureStatus = { PENDING: 0, DONE: 1, SKIPPED: 2 } as const;
-export type SkipReason = "own" | "feed" | "user_off" | "budget";
+export type SkipReason = "own" | "feed" | "user_off";
 
 /** Lines shorter than this recur across chats ("ok", "thanks"), so they are kept but never fingerprinted. */
 export const MIN_FINGERPRINT_CHARS = 8;
 export const SEEN_LINE_TTL_DAYS = 30;
+/** Processed screen text is deleted after this. Items keep their own quote, so title and quote dedupe still works. */
+export const CAPTURE_RETENTION_DAYS = Number(process.env.DOGGY_CAPTURE_RETENTION_DAYS ?? 30);
 
 export const normalizeLine = (s: string) => s.replace(/\s+/g, " ").trim();
 

@@ -59,12 +59,10 @@ URL-encode the key in the path (`/api/sources/x.com%2Fmessages`).
 ## Usage
 `GET /api/usage` → model usage for this user, today (UTC) and the last 7 days.
 ```json
-{ "today": { "day": "2026-11-02", "captureInputTokens": 41200, "capped": null },
-  "caps": { "userDailyInputTokens": 300000, "globalDailyInputTokens": 3000000 },
+{ "today": { "day": "2026-11-02", "captureInputTokens": 41200 },
   "days": [ { "day": "2026-11-02", "kind": "capture", "calls": 12, "inputTokens": 41200, "outputTokens": 9100 } ] }
 ```
-`capped` is `"user"`, `"global"` or `null`. While capped, screen captures are skipped until 00:00 UTC. Notes and ask
-still work. `kind` is `capture`, `voice`, `text` or `ask`. Without an API key, calls are counted with 0 tokens.
+Usage is recorded, never capped. `kind` is `capture`, `voice`, `text` or `ask`. Without an API key, calls are counted with 0 tokens.
 
 ## Notes (voice / text from any client)
 `POST /api/notes` `{text, source: "voice"|"text"}` → `{note:{id}, items:[Item]}` (extraction is synchronous here).
