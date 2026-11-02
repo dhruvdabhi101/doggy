@@ -20,7 +20,7 @@
 * { box-sizing: border-box; }
 html, body { margin: 0; background: var(--bg); color: var(--text); }
 body { font: 15px/1.45 ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; -webkit-tap-highlight-color: transparent; }
-input, button { font: inherit; color: inherit; }
+input, button, select, textarea { font: inherit; color: inherit; }
 input {
   width: 100%; padding: 12px 14px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface);
   font-size: 16px; /* stops iOS zoom */ outline: none;
@@ -120,3 +120,18 @@ a.primary { display: inline-block; text-decoration: none; }
 .install-hint { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 8px 0;
   padding: 10px 12px; border-radius: 12px; background: var(--surface-2); font-size: 14px; }
 .install-hint svg { vertical-align: -2px; }
+
+/* item edit */
+.row-actions { display: flex; gap: 16px; margin-top: 4px; }
+.danger-link { color: var(--danger); }
+.item.editor { display: grid; gap: 10px; }
+.field { display: grid; gap: 4px; font-size: 12.5px; color: var(--muted); font-weight: 500; min-width: 0; }
+.field input, .field select, .field textarea { color: var(--text); }
+.field-row { display: grid; grid-template-columns: 1fr 1.6fr; gap: 10px; }
+@media (max-width: 480px) { .field-row { grid-template-columns: 1fr; } }
+select, textarea { width: 100%; padding: 12px 14px; border: 1px solid var(--line); border-radius: 12px;
+  background: var(--surface); font-size: 16px; outline: none; }
+select:focus, textarea:focus { border-color: var(--accent); }
+textarea { resize: vertical; }
+.due { display: flex; gap: 8px; align-items: center; }
+.editor-actions { display: flex; justify-content: flex-end; gap: 8px; }

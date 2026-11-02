@@ -4,8 +4,8 @@ import { serveStatic } from "hono/bun";
 import { existsSync } from "node:fs";
 import { login, requireAuth, signup, type AuthEnv } from "./auth";
 import {
-  db, getItem, now, searchCaptures, searchItems, toItem, uid, updateItem, openItems,
-  type ItemRow,
+  db, getItem, insertItem, now, searchCaptures, searchItems, toItem, uid, updateItem, openItems,
+  type ItemPatch, type ItemRow,
 } from "./db";
 import { answer, hasLLM, MODEL, MODEL_FAST, ITEM_TYPES } from "./llm";
 import { processPendingCaptures, processSource } from "./pipeline";
@@ -106,16 +106,54 @@ app.get("/api/items", (c) => {
   ).all(...args, limit) as ItemRow[];
   return c.json({ items: rows.map(toItem) });
 });
+/** Validate user-editable item fields. Returns the clean patch or an error message. */
+function parseItemFields(b: any): { patch: ItemPatch } | { error: string } {
+  const patch: ItemPatch = {};
+  const str = (v: unknown, max: number) => (typeof v === "string" ? v.trim().slice(0, max) : undefined);
+  const nullableStr = (v: unknown, max: number) => (v === null ? null : str(v, max) || null);
+  if (b.status !== undefined) {
+    if (!["open", "done", "dismissed"].includes(b.status)) return { error: "bad status" };
+    patch.status = b.status;
+  }
+  if (b.type !== undefined) {
+    if (!ITEM_TYPES.includes(b.type)) return { error: "bad type" };
+    patch.type = b.type;
+  }
+  if (b.title !== undefined) {
+    const t = str(b.title, 300);
+    if (!t) return { error: "title can't be empty" };
+    patch.title = t;
+  }
+  if (b.dueAt !== undefined) {
+    if (b.dueAt === null || b.dueAt === "") patch.dueAt = null;
+    else {
+      const d = new Date(b.dueAt);
+      if (Number.isNaN(d.getTime())) return { error: "bad dueAt" };
+      patch.dueAt = d.toISOString();
+    }
+  }
+  if (b.details !== undefined) patch.details = nullableStr(b.details, 5000);
+  if (b.owner !== undefined) patch.owner = nullableStr(b.owner, 200);
+  if (b.counterparty !== undefined) patch.counterparty = nullableStr(b.counterparty, 200);
+  return { patch };
+}
+
 app.post("/api/items", async (c) => {
-  const b = (await c.req.json().catch(() => ({}))) as any;
-  if (!b.title || !ITEM_TYPES.includes(b.type)) return c.json({ error: "type and title required" }, 400);
-  const { insertItem } = await import("./db");
-  return c.json({ item: insertItem(c.get("user").id, { ...b, sourceKind: "text", confidence: 1 }) });
+  const r = parseItemFields(await c.req.json().catch(() => ({})));
+  if ("error" in r) return c.json({ error: r.error }, 400);
+  const p = r.patch;
+  if (!p.title || !p.type) return c.json({ error: "type and title required" }, 400);
+  return c.json({
+    item: insertItem(c.get("user").id, {
+      type: p.type, title: p.title, details: p.details, owner: p.owner ?? "me", counterparty: p.counterparty,
+      dueAt: p.dueAt, sourceKind: "text", confidence: 1,
+    }),
+  });
 });
 app.patch("/api/items/:id", async (c) => {
-  const b = (await c.req.json().catch(() => ({}))) as { status?: string; title?: string; dueAt?: string | null };
-  if (b.status && !["open", "done", "dismissed"].includes(b.status)) return c.json({ error: "bad status" }, 400);
-  const item = updateItem(c.get("user").id, c.req.param("id"), b);
+  const r = parseItemFields(await c.req.json().catch(() => ({})));
+  if ("error" in r) return c.json({ error: r.error }, 400);
+  const item = updateItem(c.get("user").id, c.req.param("id"), r.patch);
   return item ? c.json({ item }) : c.json({ error: "Not found" }, 404);
 });
 app.get("/api/items/:id", (c) => {

@@ -6,6 +6,7 @@ export type Item = {
   sourceWindow: string | null; sourceId: string | null; confidence: number;
   createdAt: string; updatedAt: string; seq: number;
 };
+export type ItemPatch = Partial<Pick<Item, "status" | "title" | "type" | "dueAt" | "details" | "owner" | "counterparty">>;
 export type Device = { id: string; name: string; kind: string; lastSeenAt: string | null; createdAt: string };
 export type Session = { token: string; user: { id: string; email: string; name: string | null } };
 export type CaptureHit = { id: number; app: string; window: string; text: string; capturedAt: string };
@@ -47,7 +48,7 @@ export const api = {
   changes: (since: number) => call<{ items: Item[]; cursor: number }>(`/api/changes?since=${since}`),
   note: (text: string, source: "voice" | "text") =>
     call<{ items: Item[]; warning?: string }>("/api/notes", { method: "POST", body: JSON.stringify({ text, source }) }),
-  patch: (id: string, patch: Partial<Pick<Item, "status" | "title" | "dueAt">>) =>
+  patch: (id: string, patch: ItemPatch) =>
     call<{ item: Item }>(`/api/items/${id}`, { method: "PATCH", body: JSON.stringify(patch) }),
   search: (q: string) => call<{ items: Item[]; captures: CaptureHit[] }>(`/api/search?q=${encodeURIComponent(q)}`),
   ask: (question: string) => call<{ answer: string; sources: Item[] }>("/api/ask", { method: "POST", body: JSON.stringify({ question }) }),

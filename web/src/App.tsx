@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { api, ApiError, loadSession, saveSession, type CaptureHit, type Device, type Item, type Session } from "./api";
+import { api, ApiError, loadSession, saveSession, type CaptureHit, type Device, type Item, type ItemPatch, type ItemType, type Session } from "./api";
 import { useSpeech } from "./speech";
 
 type Tab = "today" | "ask" | "memory" | "devices";
@@ -76,9 +76,11 @@ function Main({ session, onLogout }: { session: Session; onLogout: () => void })
   useEffect(() => { api.health().then((h) => setLlm(h.llm)).catch(() => {}); }, []);
   useEffect(() => { if (!toast) return; const t = setTimeout(() => setToast(null), 4000); return () => clearTimeout(t); }, [toast]);
 
-  const setStatus = async (it: Item, status: Item["status"]) => {
-    upsert([{ ...it, status }]);
-    try { upsert([(await api.patch(it.id, { status })).item]); } catch (e) { setToast((e as Error).message); }
+  // Optimistic update; the server's copy wins once it answers. Returns false on failure.
+  const update = async (it: Item, patch: ItemPatch): Promise<boolean> => {
+    upsert([{ ...it, ...patch }]);
+    try { upsert([(await api.patch(it.id, patch)).item]); return true; }
+    catch (e) { upsert([it]); setToast((e as Error).message); return false; }
   };
 
   const tabs: [Tab, string][] = [["today", "Open loops"], ["ask", "Ask"], ["memory", "Memory"], ["devices", "Devices"]];
@@ -93,9 +95,9 @@ function Main({ session, onLogout }: { session: Session; onLogout: () => void })
       </header>
       <main>
         <InstallHint />
-        {tab === "today" && <Today items={items} onStatus={setStatus} />}
+        {tab === "today" && <Today items={items} onUpdate={update} />}
         {tab === "ask" && <Ask />}
-        {tab === "memory" && <Memory items={items} onStatus={setStatus} />}
+        {tab === "memory" && <Memory items={items} onUpdate={update} />}
         {tab === "devices" && <Devices llm={llm} />}
       </main>
       <Composer onSaved={(list, warn) => { upsert(list); setToast(warn ?? (list.length ? `Saved: ${list.map((i) => i.title).join(" · ")}` : "Saved to memory")); }}
@@ -157,7 +159,7 @@ function bucket(i: Item): string {
 }
 const ORDER = ["Overdue", "Today", "This week", "Later", "No date"];
 
-function Today({ items, onStatus }: { items: Item[]; onStatus: (i: Item, s: Item["status"]) => void }) {
+function Today({ items, onUpdate }: { items: Item[]; onUpdate: OnUpdate }) {
   const open = items.filter((i) => i.status === "open" && LOOP_TYPES.has(i.type));
   const groups = useMemo(() => {
     const g = new Map<string, Item[]>();
@@ -171,7 +173,7 @@ function Today({ items, onStatus }: { items: Item[]; onStatus: (i: Item, s: Item
       {groups.map(([k, list]) => (
         <div key={k} className="group">
           <h2 className={k === "Overdue" ? "danger" : ""}>{k} <span className="count">{list.length}</span></h2>
-          {list.map((i) => <ItemRow key={i.id} item={i} onStatus={onStatus} />)}
+          {list.map((i) => <ItemRow key={i.id} item={i} onUpdate={onUpdate} />)}
         </div>
       ))}
     </section>
@@ -184,13 +186,17 @@ const fmtDate = (s: string) => {
 };
 const SOURCE_LABEL = { capture: "seen on screen", voice: "you said", text: "you wrote" } as const;
 
-function ItemRow({ item, onStatus }: { item: Item; onStatus: (i: Item, s: Item["status"]) => void }) {
+type OnUpdate = (i: Item, patch: ItemPatch) => Promise<boolean>;
+
+function ItemRow({ item, onUpdate }: { item: Item; onUpdate: OnUpdate }) {
   const [open, setOpen] = useState(false);
+  const [editing, setEditing] = useState(false);
   const done = item.status !== "open";
+  if (editing) return <ItemEditor item={item} onCancel={() => setEditing(false)} onSave={async (p) => { if (await onUpdate(item, p)) setEditing(false); }} />;
   return (
     <div className={`item ${done ? "done" : ""}`}>
       <button className={`check ${item.status === "done" ? "on" : ""}`} aria-label={done ? "Reopen" : "Mark done"}
-        onClick={() => onStatus(item, done ? "open" : "done")}>{item.status === "done" ? "✓" : ""}</button>
+        onClick={() => onUpdate(item, { status: done ? "open" : "done" })}>{item.status === "done" ? "✓" : ""}</button>
       <div className="body" onClick={() => setOpen(!open)}>
         <div className="title">{item.title}</div>
         <div className="meta">
@@ -205,11 +211,74 @@ function ItemRow({ item, onStatus }: { item: Item; onStatus: (i: Item, s: Item["
             {item.details && <p>{item.details}</p>}
             {item.evidence && <blockquote>“{item.evidence}”</blockquote>}
             <p className="muted small">{SOURCE_LABEL[item.sourceKind]}{item.sourceWindow ? ` · ${item.sourceWindow}` : ""} · {fmtDate(item.createdAt)} · confidence {Math.round(item.confidence * 100)}%</p>
-            {!done && <button className="link small" onClick={(e) => { e.stopPropagation(); onStatus(item, "dismissed"); }}>Not a real task — dismiss</button>}
+            <div className="row-actions" onClick={(e) => e.stopPropagation()}>
+              <button className="link small" onClick={() => setEditing(true)}>Edit</button>
+              {item.status !== "dismissed"
+                ? <button className="link small danger-link" onClick={() => onUpdate(item, { status: "dismissed" })}>Delete</button>
+                : <button className="link small" onClick={() => onUpdate(item, { status: "open" })}>Restore</button>}
+            </div>
           </div>
         )}
       </div>
     </div>
+  );
+}
+
+const TYPES: ItemType[] = ["task", "commitment", "event", "decision", "memory"];
+
+/** ISO <-> <input type="datetime-local"> value (local time, no seconds). */
+const toLocalInput = (iso: string | null) => {
+  if (!iso) return "";
+  const d = new Date(iso);
+  return new Date(d.getTime() - d.getTimezoneOffset() * 60_000).toISOString().slice(0, 16);
+};
+
+function ItemEditor({ item, onSave, onCancel }: { item: Item; onSave: (p: ItemPatch) => Promise<void>; onCancel: () => void }) {
+  const [title, setTitle] = useState(item.title);
+  const [type, setType] = useState<ItemType>(item.type);
+  const [due, setDue] = useState(toLocalInput(item.dueAt));
+  const [who, setWho] = useState(item.counterparty ?? "");
+  const [details, setDetails] = useState(item.details ?? "");
+  const [busy, setBusy] = useState(false);
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!title.trim()) return;
+    setBusy(true);
+    await onSave({
+      title: title.trim(), type, dueAt: due ? new Date(due).toISOString() : null,
+      counterparty: who.trim() || null, details: details.trim() || null,
+    });
+    setBusy(false);
+  };
+  return (
+    <form className="item editor" onSubmit={submit} onKeyDown={(e) => e.key === "Escape" && onCancel()}>
+      <label className="field"><span>Title</span>
+        <input value={title} onChange={(e) => setTitle(e.target.value)} required autoFocus />
+      </label>
+      <div className="field-row">
+        <label className="field"><span>Type</span>
+          <select value={type} onChange={(e) => setType(e.target.value as ItemType)}>
+            {TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
+          </select>
+        </label>
+        <label className="field"><span>Due</span>
+          <div className="due">
+            <input type="datetime-local" value={due} onChange={(e) => setDue(e.target.value)} />
+            {due && <button type="button" className="link small" onClick={() => setDue("")}>Clear</button>}
+          </div>
+        </label>
+      </div>
+      <label className="field"><span>With</span>
+        <input value={who} onChange={(e) => setWho(e.target.value)} placeholder="Person (optional)" />
+      </label>
+      <label className="field"><span>Notes</span>
+        <textarea value={details} onChange={(e) => setDetails(e.target.value)} rows={3} placeholder="Optional" />
+      </label>
+      <div className="editor-actions">
+        <button type="button" className="ghost" onClick={onCancel}>Cancel</button>
+        <button className="primary" disabled={busy || !title.trim()}>{busy ? "Saving…" : "Save"}</button>
+      </div>
+    </form>
   );
 }
 
@@ -250,7 +319,7 @@ function Ask() {
 }
 
 // ---------------- memory (search + timeline) ----------------
-function Memory({ items, onStatus }: { items: Item[]; onStatus: (i: Item, s: Item["status"]) => void }) {
+function Memory({ items, onUpdate }: { items: Item[]; onUpdate: OnUpdate }) {
   const [q, setQ] = useState(""); const [hits, setHits] = useState<{ items: Item[]; captures: CaptureHit[] } | null>(null);
   const [filter, setFilter] = useState<string>("all");
   useEffect(() => {
@@ -268,7 +337,7 @@ function Memory({ items, onStatus }: { items: Item[]; onStatus: (i: Item, s: Ite
           <button key={f} className={`chip ${filter === f ? "on" : ""}`} onClick={() => setFilter(f)}>{f}</button>
         ))}
       </div>
-      {list.map((i) => <ItemRow key={i.id} item={i} onStatus={onStatus} />)}
+      {list.map((i) => <ItemRow key={i.id} item={i} onUpdate={onUpdate} />)}
       {!list.length && !hits?.captures.length && <Empty title={q ? "No matches" : "No memories yet"} body="Things you say, type, or that the desktop agent sees will show up here." />}
       {!!hits?.captures.length && (
         <div className="group"><h2>On your screen</h2>

@@ -115,14 +115,23 @@ export function getItem(userId: string, id: string): Item | null {
   return r ? toItem(r) : null;
 }
 
-export function updateItem(
-  userId: string, id: string, patch: { status?: string; title?: string; dueAt?: string | null },
-): Item | null {
+export type ItemPatch = {
+  status?: string; title?: string; type?: string; dueAt?: string | null;
+  details?: string | null; owner?: string | null; counterparty?: string | null;
+};
+
+export function updateItem(userId: string, id: string, patch: ItemPatch): Item | null {
   const cur = getItem(userId, id);
   if (!cur) return null;
-  db.query("UPDATE items SET status=?, title=?, due_at=?, updated_at=?, seq=? WHERE id=? AND user_id=?").run(
-    patch.status ?? cur.status, patch.title ?? cur.title,
-    patch.dueAt === undefined ? cur.dueAt : patch.dueAt, now(), nextSeq(), id, userId,
+  const pick = <K extends keyof ItemPatch>(k: K, fallback: unknown) => (patch[k] === undefined ? fallback : patch[k]);
+  db.query(
+    `UPDATE items SET status=?, title=?, type=?, due_at=?, details=?, owner=?, counterparty=?, updated_at=?, seq=?
+     WHERE id=? AND user_id=?`,
+  ).run(
+    pick("status", cur.status) as string, pick("title", cur.title) as string, pick("type", cur.type) as string,
+    pick("dueAt", cur.dueAt) as string | null, pick("details", cur.details) as string | null,
+    pick("owner", cur.owner) as string | null, pick("counterparty", cur.counterparty) as string | null,
+    now(), nextSeq(), id, userId,
   );
   return getItem(userId, id);
 }
