@@ -166,6 +166,9 @@ public static class UiaCapturer
         }
     }
 
+    public static bool IsDefaultExcluded(string processName) =>
+        DefaultExclude.Any(e => processName.Contains(e, StringComparison.OrdinalIgnoreCase));
+
     private static bool IsExcluded(string procLower, IReadOnlyCollection<string> extra)
     {
         if (string.IsNullOrEmpty(procLower)) return false;

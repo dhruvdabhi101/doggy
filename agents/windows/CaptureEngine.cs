@@ -42,6 +42,9 @@ public sealed class CaptureEngine
         get { long t = Interlocked.Read(ref _lastUploadTicks); return t == 0 ? null : new DateTime(t, DateTimeKind.Utc); }
     }
     public string? LastError => _lastError;
+    private volatile string? _lastApp;
+    /// <summary>Process name of the last window read, so the tray can offer to stop capturing it.</summary>
+    public string? LastApp => _lastApp;
     public bool IsRunning => _thread?.IsAlive == true;
     /// <summary>1 if the loop ended because the token was rejected / missing, else 0.</summary>
     public int ExitCode { get; private set; }
@@ -170,7 +173,8 @@ public sealed class CaptureEngine
                 SetStatus(_uploadFailing ? CaptureStatus.Error : CaptureStatus.Capturing);
 
             CaptureResult res;
-            try { res = UiaCapturer.CaptureForeground(cfg.ExcludeApps); }
+            var exclude = AgentConfig.Load()?.ExcludeApps ?? cfg.ExcludeApps;
+            try { res = UiaCapturer.CaptureForeground(exclude); }
             catch (Exception ex)
             {
                 res = new CaptureResult { Skipped = true, SkipReason = "loop error: " + ex.Message };
@@ -178,6 +182,7 @@ public sealed class CaptureEngine
 
             if (!res.Skipped)
             {
+                if (!string.IsNullOrEmpty(res.App)) _lastApp = res.App;
                 string windowKey = res.App + "\u0000" + res.Window;
                 string newText = differ.Diff(windowKey, res.Text);
                 if (!string.IsNullOrEmpty(newText))

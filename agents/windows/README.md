@@ -110,6 +110,8 @@ resume. No restart needed.
 }
 ```
 
+The tray menu edits this list for you. **Don't capture <app>** ignores the app you were last in, and **Apps Doggy ignores…** lists, removes and adds apps. Changes apply within one capture tick (3s), without a restart.
+
 `excludeApps` is an optional list of process-name substrings (case-insensitive)
 to never capture, on top of the built-in skip list (1Password, Bitwarden,
 KeePass, `credentialuifirefox`, LogonUI, LockApp).

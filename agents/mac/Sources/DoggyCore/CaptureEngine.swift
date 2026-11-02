@@ -1,6 +1,11 @@
 import Combine
 import Foundation
 
+public struct CapturedApp: Equatable {
+    public let name: String
+    public let bundleId: String?
+}
+
 public enum CaptureState: Equatable {
     case stopped, running, paused, needsPermission, notLoggedIn
 }
@@ -16,6 +21,8 @@ public final class CaptureEngine: ObservableObject {
     @Published public private(set) var lastUpload: Date?
     @Published public private(set) var eventsSentToday = 0
     @Published public private(set) var lastError: String?
+    /// The last app whose window was read, so the menu can offer to stop capturing it.
+    @Published public private(set) var lastApp: CapturedApp?
 
     public let interval: TimeInterval
     private let queue = DispatchQueue(label: "world.ruv.doggy.capture", qos: .utility)
@@ -83,6 +90,8 @@ public final class CaptureEngine: ObservableObject {
         } else {
             publish { if $0.state != .running { $0.state = .running } }
             if let snap = capture.frontmost(exclude: cfg.excludeApps ?? []) {
+                let app = CapturedApp(name: snap.app, bundleId: snap.bundleId)
+                publish { if $0.lastApp != app { $0.lastApp = app } }
                 let key = (snap.bundleId ?? snap.app) + "\u{1}" + snap.window
                 let fresh = differ.newLines(key: key, lines: snap.lines)
                 if !fresh.isEmpty {
