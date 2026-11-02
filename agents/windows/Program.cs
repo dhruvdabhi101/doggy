@@ -1,7 +1,28 @@
-using System.Text.Json;
+using System.Runtime.InteropServices;
 using DoggyAgent;
 
-return Cli.Dispatch(args);
+static class Program
+{
+    private const int ATTACH_PARENT_PROCESS = -1;
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool AttachConsole(int dwProcessId);
+
+    /// <summary>
+    /// No arguments → tray app. Any arguments → the original CLI. The exe is a
+    /// WinExe (no console window), so in CLI mode we attach to the parent
+    /// terminal's console to keep stdout/stderr working.
+    /// </summary>
+    [STAThread]
+    static int Main(string[] args)
+    {
+        if (args.Length == 0)
+            return TrayApp.Run();
+
+        AttachConsole(ATTACH_PARENT_PROCESS);
+        return Cli.Dispatch(args);
+    }
+}
 
 static class Cli
 {
@@ -36,6 +57,7 @@ static class Cli
 @"doggy-agent — Windows desktop capture agent for Doggy
 
 Usage:
+  doggy-agent                (no arguments: start the Doggy tray app)
   doggy-agent login --server URL --email E --password P [--device-name N]
   doggy-agent run [--dry-run] [--once]
   doggy-agent status
@@ -98,100 +120,16 @@ Config is stored at %USERPROFILE%\.doggy\agent.json. Create %USERPROFILE%\.doggy
         bool dryRun = opts.ContainsKey("dry-run");
         bool once = opts.ContainsKey("once");
 
-        AgentConfig cfg;
-        if (dryRun)
+        var engine = new CaptureEngine(dryRun, once, Console.WriteLine);
+        if (!engine.Start())
         {
-            cfg = AgentConfig.Load() ?? new AgentConfig();
-        }
-        else
-        {
-            var loaded = AgentConfig.Load();
-            if (loaded is null || string.IsNullOrEmpty(loaded.Token))
-            {
-                Console.Error.WriteLine("not logged in (run `doggy-agent login`)");
-                return 1;
-            }
-            cfg = loaded;
+            Console.Error.WriteLine("not logged in (run `doggy-agent login`)");
+            return 1;
         }
 
-        // UI Automation requires an STA thread.
-        int exit = 0;
-        var t = new Thread(() => exit = RunLoop(cfg, dryRun, once));
-        t.SetApartmentState(ApartmentState.STA);
-        t.IsBackground = false;
-        t.Start();
-        t.Join();
-        return exit;
-    }
-
-    static int RunLoop(AgentConfig cfg, bool dryRun, bool once)
-    {
-        var differ = new LineDiffer();
-        var sender = dryRun ? null : new BatchSender(cfg);
-
-        using var cancel = new CancellationTokenSource();
-        Console.CancelKeyPress += (_, e) => { e.Cancel = true; cancel.Cancel(); };
-
-        while (!cancel.IsCancellationRequested)
-        {
-            if (!dryRun && AgentConfig.IsPaused())
-            {
-                if (once) break;
-                Sleep(3000, cancel.Token);
-                continue;
-            }
-
-            CaptureResult res;
-            try { res = UiaCapturer.CaptureForeground(cfg.ExcludeApps); }
-            catch (Exception ex)
-            {
-                res = new CaptureResult { Skipped = true, SkipReason = "loop error: " + ex.Message };
-            }
-
-            if (!res.Skipped)
-            {
-                string windowKey = res.App + "\u0000" + res.Window;
-                string newText = differ.Diff(windowKey, res.Text);
-                if (!string.IsNullOrEmpty(newText))
-                {
-                    var ev = new CaptureEvent
-                    {
-                        App = string.IsNullOrEmpty(res.App) ? "Unknown" : res.App,
-                        BundleId = res.BundleId,
-                        Window = res.Window,
-                        Url = res.Url,
-                        Text = newText,
-                        CapturedAt = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ"),
-                    };
-
-                    if (dryRun)
-                        Console.WriteLine(JsonSerializer.Serialize(new[] { ev },
-                            new JsonSerializerOptions { WriteIndented = true }));
-                    else
-                        sender!.Enqueue(ev);
-                }
-                else if (dryRun)
-                {
-                    Console.WriteLine("[]  // no new text for " + res.App + " / " + res.Window);
-                }
-            }
-            else if (dryRun)
-            {
-                Console.WriteLine($"[]  // skipped: {res.SkipReason} (app={res.App})");
-            }
-
-            if (once) break;
-            sender?.MaybeFlush();
-            Sleep(3000, cancel.Token);
-        }
-
-        sender?.FlushNow();
-        return 0;
-    }
-
-    static void Sleep(int ms, CancellationToken ct)
-    {
-        try { Task.Delay(ms, ct).Wait(ct); } catch { }
+        Console.CancelKeyPress += (_, e) => { e.Cancel = true; engine.RequestStop(); };
+        engine.Join(); // capture runs on the engine's STA thread; flushes before exit
+        return engine.ExitCode;
     }
 
     // ---- tiny opt parser ("--key value" or "--flag") ----
