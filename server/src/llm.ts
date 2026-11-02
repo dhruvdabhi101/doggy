@@ -36,6 +36,17 @@ const Extracted = z.object({
 });
 export type Extraction = z.infer<typeof Extracted>;
 
+/** Billed tokens of one call. Input includes cache writes and reads. Zero on the heuristic path. */
+export type Usage = { inputTokens: number; outputTokens: number };
+const NO_USAGE: Usage = { inputTokens: 0, outputTokens: 0 };
+function usageOf(res: { usage: Anthropic.Beta.BetaUsage }): Usage {
+  const u = res.usage;
+  return {
+    inputTokens: (u.input_tokens ?? 0) + (u.cache_creation_input_tokens ?? 0) + (u.cache_read_input_tokens ?? 0),
+    outputTokens: u.output_tokens ?? 0,
+  };
+}
+
 const nullable = (t: string) => ({ anyOf: [{ type: t }, { type: "null" }] });
 const EXTRACT_SCHEMA = {
   type: "object",
@@ -105,8 +116,8 @@ export type ExtractInput = {
   existing: Item[];
 };
 
-export async function extract(input: ExtractInput): Promise<Extraction> {
-  if (!client) return heuristicExtract(input);
+export async function extract(input: ExtractInput): Promise<{ result: Extraction; usage: Usage }> {
+  if (!client) return { result: heuristicExtract(input), usage: NO_USAGE };
   const nowLocal = new Date().toLocaleString("en-US", { timeZone: input.tz, dateStyle: "full", timeStyle: "short" });
   const header = [
     `User: ${input.userName ?? "(unknown name)"} <${input.userEmail}>`,
@@ -142,28 +153,37 @@ export async function extract(input: ExtractInput): Promise<Extraction> {
     }],
   } as any);
 
+  const usage = usageOf(res);
   if (res.stop_reason === "refusal" || res.stop_reason === "max_tokens") {
     console.warn(`[llm] extract stopped: ${res.stop_reason}`);
-    return input.kind === "capture" ? { items: [], closes: [] } : heuristicExtract(input);
+    return { result: input.kind === "capture" ? { items: [], closes: [] } : heuristicExtract(input), usage };
   }
   const text = res.content.flatMap((b: any) => (b.type === "text" ? [b.text] : [])).join("");
   const parsed = Extracted.safeParse(JSON.parse(text));
   if (!parsed.success) {
     console.warn("[llm] extract schema mismatch", parsed.error.message);
-    return { items: [], closes: [] };
+    return { result: { items: [], closes: [] }, usage };
   }
   const known = new Set(input.existing.map((i) => i.id));
   return {
-    items: parsed.data.items.filter((it) => it.source >= 0 && it.source < input.sources.length),
-    closes: parsed.data.closes.filter((c) => known.has(c.item_id)),
+    result: {
+      items: parsed.data.items.filter((it) => it.source >= 0 && it.source < input.sources.length),
+      closes: parsed.data.closes.filter((c) => known.has(c.item_id)),
+    },
+    usage,
   };
 }
 
-export async function answer(question: string, tz: string, sources: { label: string; text: string }[]) {
+export async function answer(
+  question: string, tz: string, sources: { label: string; text: string }[],
+): Promise<{ text: string; usage: Usage }> {
   if (!client) {
-    if (!sources.length) return "I couldn't find anything about that yet.";
-    return "Here's what I found (no AI key configured, showing raw matches):\n" +
-      sources.slice(0, 6).map((s, i) => `[${i + 1}] ${s.text}`).join("\n");
+    if (!sources.length) return { text: "I couldn't find anything about that yet.", usage: NO_USAGE };
+    return {
+      text: "Here's what I found (no AI key configured, showing raw matches):\n" +
+        sources.slice(0, 6).map((s, i) => `[${i + 1}] ${s.text}`).join("\n"),
+      usage: NO_USAGE,
+    };
   }
   const nowLocal = new Date().toLocaleString("en-US", { timeZone: tz, dateStyle: "full", timeStyle: "short" });
   const ctx = sources.map((s, i) => `[${i + 1}] ${s.label}\n${s.text}`).join("\n\n");
@@ -178,8 +198,9 @@ export async function answer(question: string, tz: string, sources: { label: str
       "If the sources don't contain the answer, say so plainly. Current time: " + nowLocal + ` (${tz}).`,
     messages: [{ role: "user", content: `Sources:\n${ctx || "(none)"}\n\nQuestion: ${question}` }],
   } as any);
-  if (res.stop_reason === "refusal") return "I can't answer that one.";
-  return res.content.flatMap((b: any) => (b.type === "text" ? [b.text] : [])).join("").trim();
+  const usage = usageOf(res);
+  if (res.stop_reason === "refusal") return { text: "I can't answer that one.", usage };
+  return { text: res.content.flatMap((b: any) => (b.type === "text" ? [b.text] : [])).join("").trim(), usage };
 }
 
 // ---------- heuristic fallback (no API key) ----------

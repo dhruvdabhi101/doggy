@@ -13,6 +13,7 @@ import { handleMcp } from "./mcp";
 import { filterNewLines } from "./capture";
 import { classify } from "./sources";
 import { listSources, parseLaneBody, setLaneOverride } from "./lanes";
+import { recordUsage, usageReport } from "./usage";
 
 const app = new Hono<AuthEnv>();
 app.use("/api/*", cors());
@@ -97,6 +98,8 @@ app.put("/api/sources/:key", async (c) => {
   setLaneOverride(user.id, key, r.lane);
   return c.json({ source: listSources(user.id).find((s) => s.key === key) ?? null });
 });
+
+app.get("/api/usage", (c) => c.json(usageReport(c.get("user").id)));
 
 // ---- notes (voice / text) ----
 app.post("/api/notes", async (c) => {
@@ -227,7 +230,9 @@ app.post("/api/ask", async (c) => {
     ...caps.map((x) => ({ label: `screen text from ${x.app} / ${x.window} at ${local(x.capturedAt)}`, text: x.text })),
   ];
   try {
-    return c.json({ answer: await answer(question, user.tz, sources), sources: all });
+    const r = await answer(question, user.tz, sources);
+    recordUsage(user.id, "ask", r.usage);
+    return c.json({ answer: r.text, sources: all });
   } catch (e) {
     console.error("[ask] failed:", (e as Error).message);
     return c.json({ answer: "Answering failed; showing matches instead.", sources: all });

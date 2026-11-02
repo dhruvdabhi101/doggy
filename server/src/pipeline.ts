@@ -2,6 +2,7 @@ import { db, insertItem, itemKeyTaken, openItems, updateItem, searchItems, type 
 import { extract, type ExtractInput, type ExtractSource } from "./llm";
 import { type Source, type SourceKind } from "./sources";
 import { laneFor, recordSourceStats } from "./lanes";
+import { captureCapHit, recordUsage, utcDay } from "./usage";
 import {
   CaptureStatus, EPISODE_MAX_CHARS, MIN_EPISODE_CHARS, SEEN_LINE_TTL_DAYS, isReady, packEpisodes, type SkipReason,
 } from "./capture";
@@ -18,7 +19,8 @@ export async function processSources(user: UserCtx, kind: ExtractInput["kind"], 
   const existing = [...new Map([...openItems(user.id, 25), ...related].map((i) => [i.id, i])).values()];
   const sources: ExtractSource[] = inputs.map((s) => ({ app: s.app ?? null, window: s.window ?? null, url: s.url ?? null, text: s.text }));
 
-  const out = await extract({ kind, sources, userName: user.name, userEmail: user.email, tz: user.tz, existing });
+  const { result: out, usage } = await extract({ kind, sources, userName: user.name, userEmail: user.email, tz: user.tz, existing });
+  recordUsage(user.id, kind, usage);
 
   const created: Item[][] = inputs.map(() => []);
   for (const it of out.items) {
@@ -113,10 +115,21 @@ export async function processPendingCaptures() {
   }
 }
 
+const capLogged = new Map<string, string>();
+
 async function extractForUser(userId: string, eps: Episode[]) {
   const user = db.query("SELECT id, email, name, tz FROM users WHERE id = ?").get(userId) as UserCtx;
   const packs = packEpisodes(eps);
   for (const pack of packs) {
+    const cap = captureCapHit(userId);
+    if (cap) {
+      for (const ep of pack) markCaptures(ep.ids, CaptureStatus.SKIPPED, "budget");
+      if (capLogged.get(userId) !== utcDay()) {
+        capLogged.set(userId, utcDay());
+        console.warn(`[pipeline] user ${userId}: ${cap} daily capture token cap reached; skipping captures until 00:00 UTC`);
+      }
+      continue;
+    }
     try {
       const created = await processSources(user, "capture", pack.map((ep) => ({
         app: ep.app, window: ep.window, url: ep.url, text: ep.text, sourceId: `capture:${ep.ids.at(-1)}`,

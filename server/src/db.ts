@@ -94,6 +94,11 @@ CREATE TABLE IF NOT EXISTS seen_lines (
   PRIMARY KEY (user_id, scope, hash)
 ) WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS seen_lines_age ON seen_lines(seen_at);
+CREATE TABLE IF NOT EXISTS llm_usage (
+  day TEXT NOT NULL, user_id TEXT NOT NULL, kind TEXT NOT NULL,
+  calls INTEGER NOT NULL DEFAULT 0, input_tokens INTEGER NOT NULL DEFAULT 0, output_tokens INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (day, user_id, kind)
+);
 CREATE TABLE IF NOT EXISTS source_prefs (
   user_id TEXT NOT NULL, source_key TEXT NOT NULL, lane TEXT NOT NULL, updated_at TEXT NOT NULL,
   PRIMARY KEY (user_id, source_key)
