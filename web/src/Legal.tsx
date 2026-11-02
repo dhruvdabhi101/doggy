@@ -78,13 +78,13 @@ function Retention() {
   return (
     <>
       <h1>Data retention</h1>
-      <p>This is how long each kind of data is kept today. Doggy is early, so nothing expires on its own yet. Data is kept until you or Doggy deletes it.</p>
+      <p>This is how long each kind of data is kept. Raw screen text and line fingerprints expire on their own. Everything else is kept until you delete it or your account is deleted.</p>
 
       <div className="legal-table">
         <table>
           <thead><tr><th>Data</th><th>Kept for</th><th>How it is removed</th></tr></thead>
           <tbody>
-            <tr><td>Screen text from the desktop app</td><td>Until your account is deleted</td><td>Account deletion</td></tr>
+            <tr><td>Screen text from the desktop app</td><td>30 days after Doggy has processed it</td><td>Deleted automatically. Items found in it keep their own short quote.</td></tr>
             <tr><td>Items (tasks, commitments, memories)</td><td>Until your account is deleted</td><td>Deleting an item hides it so it can be restored. It is erased with your account.</td></tr>
             <tr><td>Notes and voice notes (as text)</td><td>Until your account is deleted</td><td>Account deletion</td></tr>
             <tr><td>Account details</td><td>Until your account is deleted</td><td>Account deletion</td></tr>
@@ -106,7 +106,7 @@ function Retention() {
       <p>Email <a href={`mailto:${CONTACT}`}>{CONTACT}</a> from the address you signed up with. Your account, devices, screen text, notes and items are erased from the database, and you will get a reply when it is done. Copies in server logs age out on their normal rotation.</p>
 
       <h2>Changes</h2>
-      <p>If Doggy starts expiring data automatically, or keeps anything new, this page will change first and show the new date at the bottom.</p>
+      <p>If Doggy keeps anything new or keeps something longer, this page will change first and show the new date at the bottom.</p>
     </>
   );
 }
