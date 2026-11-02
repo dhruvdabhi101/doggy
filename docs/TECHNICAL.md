@@ -104,3 +104,20 @@ Smoke test: sign up via curl, `POST /api/notes`, `GET /api/items` (see the API.m
   get-ax-text. Also meetings/captureAudio/google-meet-monitor/micwatch-detector for audio.
   **Takeaway:** most of their accuracy likely comes from app-specific parsing (sender, timestamp, thread) rather than
   a big model. Our agents use one generic tree walk; adding per-app parsers for the top apps is on the plan.
+
+## Production deployment (doggy.ruv.world)
+- **Host:** VPS `187.126.120.197` (Debian 13), **shared with other production apps** (d3crm, hrms, incubyte,
+  d3agency). Don't touch their Caddy blocks, pm2, or Postgres.
+- **Layout:** repo clone at `/srv/doggy` (owner `doggy`, a system user with no login). Bun at `/opt/bun/bin/bun`.
+  Data at `/var/lib/doggy/doggy.db`. Desktop installers at `/var/lib/doggy/downloads/` (`Doggy-mac.dmg`,
+  `Doggy-windows.exe`; uploaded by hand, not in git). Secrets in `/etc/doggy/doggy.env` (root:doggy 640).
+- **Service:** `systemctl status doggy` (unit from `deploy/doggy.service`, listens on 127.0.0.1:8787, sandboxed).
+  Logs: `journalctl -u doggy -f`.
+- **Caddy:** `/etc/caddy/doggy.caddy` (from `deploy/doggy.caddy`), imported at the end of `/etc/caddy/Caddyfile`.
+  Backup taken as `/etc/caddy/Caddyfile.before-doggy-<timestamp>`. Always run
+  `caddy validate --config /etc/caddy/Caddyfile` before `systemctl reload caddy`.
+- **DNS:** Cloudflare, `A doggy → 187.126.120.197`, DNS only (grey cloud) so Caddy can get its own certificate.
+- **Deploy:** push to `main`, then `ssh root@187.126.120.197 /srv/doggy/deploy/deploy.sh` (git pull, install,
+  build web, restart, health check). First-time setup: `deploy/setup-vps.sh` (needs `unzip`).
+- **Publish desktop builds:** `scp dist/mac/Doggy-mac.dmg dist/windows/Doggy-windows.exe root@187.126.120.197:/var/lib/doggy/downloads/`
+  then `chown doggy:doggy` them. The Devices page shows download buttons for whatever files exist.
