@@ -110,6 +110,7 @@ blockquote { margin: 6px 0; padding: 6px 10px; border-left: 3px solid var(--line
 .askbar { display: flex; gap: 8px; margin: 12px 0; }
 
 /* devices */
+.device.source select { width: auto; min-width: 9.5rem; flex: none; padding: 8px 10px; }
 .device { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 12px; margin-bottom: 8px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); }
 
 .toast { position: fixed; left: 50%; transform: translateX(-50%); top: calc(14px + env(safe-area-inset-top)); z-index: 10;
