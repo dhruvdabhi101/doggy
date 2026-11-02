@@ -4,7 +4,8 @@ import { serveStatic } from "hono/bun";
 import { existsSync, statSync } from "node:fs";
 import { login, requireAuth, signup, type AuthEnv } from "./auth";
 import {
-  db, getItem, insertItem, now, searchCaptures, searchItems, toItem, uid, updateItem, openItems,
+  countCaptureHits, countItemHits, db, getItem, insertItem, listItems, now, schemaVersion, searchCaptures,
+  searchItems, toItem, uid, updateItem, openItems,
   type ItemPatch, type ItemRow,
 } from "./db";
 import { answer, hasLLM, ITEM_TYPES, type AnswerSource } from "./llm";
@@ -18,7 +19,7 @@ import { mountOAuth, resourceMetadataUrl } from "./oauth";
 import { rateLimit } from "./ratelimit";
 import { issueDevice } from "./auth";
 
-const app = new Hono<AuthEnv>();
+export const app = new Hono<AuthEnv>();
 app.use("*", async (c, next) => {
   await next();
   c.header("x-content-type-options", "nosniff");
@@ -35,7 +36,14 @@ app.use("/oauth/*", cors());
 app.use("/.well-known/*", cors());
 mountOAuth(app);
 
-app.get("/api/health", (c) => c.json({ ok: true }));
+app.get("/api/health", (c) => {
+  try {
+    db.query("SELECT 1 AS n").get();
+    return c.json({ ok: true, schemaVersion: schemaVersion() });
+  } catch {
+    return c.json({ ok: false }, 500);
+  }
+});
 
 app.use("/api/auth/*", rateLimit("auth", 20, 15 * 60_000));
 app.post("/api/auth/signup", async (c) => {
@@ -149,7 +157,15 @@ app.post("/api/capture", rateLimit("capture", 600, 10 * 60_000, (c) => c.get("de
 });
 
 // ---- sources: which apps and sites get a model call, and how soon ----
-app.get("/api/sources", (c) => c.json({ sources: listSources(c.get("user").id) }));
+app.get("/api/sources", (c) => {
+  const all = listSources(c.get("user").id);
+  if (c.req.query("limit") === undefined && c.req.query("offset") === undefined) {
+    return c.json({ sources: all, total: all.length, limit: all.length, offset: 0 });
+  }
+  const page = pageArgs(c, 10, 100);
+  if ("error" in page) return c.json({ error: page.error }, 400);
+  return c.json({ sources: all.slice(page.offset, page.offset + page.limit), total: all.length, ...page });
+});
 app.put("/api/sources/:key", async (c) => {
   const key = c.req.param("key").trim();
   if (!key || key.length > 300) return c.json({ error: "bad source key" }, 400);
@@ -192,18 +208,39 @@ app.get("/api/captures/:id", (c) => {
   return r ? c.json({ capture: r }) : c.json({ error: "Not found" }, 404);
 });
 
+const STATUSES = new Set(["open", "done", "dismissed"]);
+
+function pageArgs(c: { req: { query: (name: string) => string | undefined } }, fallbackLimit: number, maxLimit: number) {
+  const raw = (name: string) => c.req.query(name);
+  const parse = (v: string | undefined, fallback: number, min: number, max: number) => {
+    if (v === undefined || v === "") return fallback;
+    if (!/^\d+$/.test(v)) return null;
+    const n = Number(v);
+    return n < min || n > max ? null : n;
+  };
+  const limit = parse(raw("limit"), fallbackLimit, 1, maxLimit);
+  const offset = parse(raw("offset"), 0, 0, 1_000_000);
+  if (limit === null || offset === null) return { error: "bad page" as const };
+  return { limit, offset };
+}
+
 // ---- items ----
 app.get("/api/items", (c) => {
-  const { type, status } = c.req.query();
-  const limit = Math.min(Number(c.req.query("limit") ?? 200) || 200, 500);
-  const where = ["user_id = ?"]; const args: any[] = [c.get("user").id];
-  if (type) { where.push(`type IN (${type.split(",").map(() => "?").join(",")})`); args.push(...type.split(",")); }
-  if (status) { where.push("status = ?"); args.push(status); }
-  const rows = db.query(
-    `SELECT * FROM items WHERE ${where.join(" AND ")}
-     ORDER BY CASE WHEN due_at IS NULL THEN 1 ELSE 0 END, due_at ASC, created_at DESC LIMIT ?`,
-  ).all(...args, limit) as ItemRow[];
-  return c.json({ items: rows.map(toItem) });
+  const page = pageArgs(c, 200, 500);
+  if ("error" in page) return c.json({ error: page.error }, 400);
+  const type = c.req.query("type");
+  const types = type ? type.split(",").map((s) => s.trim()).filter(Boolean) : undefined;
+  if (types?.some((t) => !ITEM_TYPES.includes(t as typeof ITEM_TYPES[number]))) return c.json({ error: "bad type" }, 400);
+  const status = c.req.query("status");
+  const excludeStatus = c.req.query("excludeStatus");
+  if (status && !STATUSES.has(status)) return c.json({ error: "bad status" }, 400);
+  if (excludeStatus && !STATUSES.has(excludeStatus)) return c.json({ error: "bad status" }, 400);
+  const sort = c.req.query("sort") ?? "due";
+  if (sort !== "due" && sort !== "created") return c.json({ error: "bad sort" }, 400);
+  const { items, total } = listItems(c.get("user").id, {
+    types, status, excludeStatus, sort, limit: page.limit, offset: page.offset,
+  });
+  return c.json({ items, total, limit: page.limit, offset: page.offset });
 });
 /** Validate user-editable item fields. Returns the clean patch or an error message. */
 function parseItemFields(b: any): { patch: ItemPatch } | { error: string } {
@@ -267,10 +304,44 @@ app.get("/api/changes", (c) => {
 });
 
 // ---- search / ask ----
+app.get("/api/export", rateLimit("export", 10, 10 * 60_000, (c) => c.get("user").id), (c) => {
+  const rows = db.query("SELECT * FROM items WHERE user_id = ? ORDER BY created_at, id").all(c.get("user").id) as ItemRow[];
+  const body = JSON.stringify({ exportedAt: now(), items: rows.map(toItem) });
+  return c.body(body, 200, {
+    "content-type": "application/json; charset=utf-8",
+    "content-disposition": 'attachment; filename="doggy-export.json"',
+  });
+});
 app.get("/api/search", (c) => {
   const q = c.req.query("q") ?? "";
+  const page = pageArgs(c, 20, 50);
+  if ("error" in page) return c.json({ error: page.error }, 400);
+  const captureLimit = (() => {
+    const v = c.req.query("captureLimit");
+    if (v === undefined || v === "") return 8;
+    if (!/^\d+$/.test(v)) return null;
+    const n = Number(v);
+    return n < 1 || n > 50 ? null : n;
+  })();
+  const captureOffset = (() => {
+    const v = c.req.query("captureOffset");
+    if (v === undefined || v === "") return 0;
+    if (!/^\d+$/.test(v)) return null;
+    const n = Number(v);
+    return n < 0 || n > 1_000_000 ? null : n;
+  })();
+  if (captureLimit === null || captureOffset === null) return c.json({ error: "bad page" }, 400);
+  const type = c.req.query("type");
+  if (type && !ITEM_TYPES.includes(type as typeof ITEM_TYPES[number])) return c.json({ error: "bad type" }, 400);
   const u = c.get("user").id;
-  return c.json({ items: searchItems(u, q, 30), captures: searchCaptures(u, q, 15) });
+  return c.json({
+    items: searchItems(u, q, page.limit, page.offset, type),
+    captures: searchCaptures(u, q, captureLimit, captureOffset),
+    itemTotal: countItemHits(u, q, type),
+    captureTotal: countCaptureHits(u, q),
+    limit: page.limit,
+    offset: page.offset,
+  });
 });
 const ORIGIN = { capture: "screen", voice: "user said", text: "user wrote" } as const;
 app.post("/api/ask", rateLimit("ask", 60, 10 * 60_000, (c) => c.get("user").id), async (c) => {
@@ -314,8 +385,9 @@ if (existsSync(WEB_DIST)) {
   app.get("*", (c) => c.req.path.startsWith("/api") ? c.json({ error: "Not found" }, 404) : c.body(indexHtml.stream(), 200, { "content-type": "text/html; charset=utf-8" }));
 }
 
-setInterval(() => void processPendingCaptures(), 10_000);
-
 const port = Number(process.env.PORT ?? 8787);
-console.log(`doggy server on http://localhost:${port}${hasLLM ? "" : " (no ANTHROPIC_API_KEY: heuristic extraction)"}`);
+if (import.meta.main) {
+  setInterval(() => void processPendingCaptures(), 10_000);
+  console.log(`doggy server on http://localhost:${port}${hasLLM ? "" : " (no ANTHROPIC_API_KEY: heuristic extraction)"}`);
+}
 export default { port, hostname: process.env.HOST ?? "0.0.0.0", fetch: app.fetch };

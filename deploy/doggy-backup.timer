@@ -1,0 +1,10 @@
+[Unit]
+Description=Daily Doggy database snapshot
+
+[Timer]
+OnCalendar=*-*-* 03:17:00 UTC
+Persistent=true
+RandomizedDelaySec=20min
+
+[Install]
+WantedBy=timers.target

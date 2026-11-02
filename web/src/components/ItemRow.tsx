@@ -7,6 +7,13 @@ export type OnUpdate = (i: Item, patch: ItemPatch) => Promise<boolean>;
 
 const SOURCE_LABEL = { capture: "seen on screen", voice: "you said", text: "you wrote" } as const;
 
+function morningIn(days: number): string {
+  const d = new Date();
+  d.setDate(d.getDate() + days);
+  d.setHours(9, 0, 0, 0);
+  return d.toISOString();
+}
+
 export function ItemRow({ item, onUpdate }: { item: Item; onUpdate: OnUpdate }) {
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState(false);
@@ -33,6 +40,12 @@ export function ItemRow({ item, onUpdate }: { item: Item; onUpdate: OnUpdate }) 
             {item.evidence && <blockquote>“{item.evidence}”</blockquote>}
             <p className="muted small">{SOURCE_LABEL[item.sourceKind]}{item.sourceWindow ? ` · ${item.sourceWindow}` : ""} · {fmtDate(item.createdAt)}</p>
             <div className="row-actions">
+              {item.status === "open" && (item.type === "task" || item.type === "commitment") && (
+                <>
+                  <button className="link small" onClick={() => onUpdate(item, { dueAt: morningIn(1) })}>Tomorrow</button>
+                  <button className="link small" onClick={() => onUpdate(item, { dueAt: morningIn(7) })}>Next week</button>
+                </>
+              )}
               <button className="link small" onClick={() => setEditing(true)}>Edit</button>
               {item.status !== "dismissed"
                 ? <button className="link small danger-link" onClick={() => onUpdate(item, { status: "dismissed" })}>Delete</button>

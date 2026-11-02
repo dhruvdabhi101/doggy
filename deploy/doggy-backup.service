@@ -1,0 +1,9 @@
+[Unit]
+Description=Snapshot the Doggy SQLite database
+After=doggy.service
+
+[Service]
+Type=oneshot
+User=doggy
+Group=doggy
+ExecStart=/opt/bun/bin/bun /srv/doggy/server/scripts/backup.ts /var/lib/doggy/doggy.db

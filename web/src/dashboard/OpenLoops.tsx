@@ -1,8 +1,7 @@
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
 import type { Item } from "../lib/api";
 import { Empty } from "../components/Empty";
 import { ItemRow, type OnUpdate } from "../components/ItemRow";
-import { Pager, pageOf } from "../components/Pager";
 
 const LOOP_TYPES = new Set(["task", "commitment", "event"]);
 const ORDER = ["Overdue", "Today", "This week", "Later", "No date"] as const;
@@ -17,8 +16,7 @@ function bucket(i: Item): (typeof ORDER)[number] {
   return "Later";
 }
 
-export function OpenLoops({ items, loaded, onUpdate }: { items: Item[]; loaded: boolean; onUpdate: OnUpdate }) {
-  const [page, setPage] = useState(1);
+export function OpenLoops({ items, loaded, total, onUpdate }: { items: Item[]; loaded: boolean; total: number; onUpdate: OnUpdate }) {
   const { sorted, counts } = useMemo(() => {
     const open = items.filter((i) => i.status === "open" && LOOP_TYPES.has(i.type));
     const rank = new Map(ORDER.map((k, n) => [k, n]));
@@ -32,21 +30,22 @@ export function OpenLoops({ items, loaded, onUpdate }: { items: Item[]; loaded: 
   if (!loaded) return <div className="skeleton" aria-busy="true" />;
   if (!sorted.length) return <Empty title="Nothing open" body="Say or type something to remember, or install the desktop app to pick up tasks from your chats and email." />;
 
-  const { rows, page: p, pages } = pageOf(sorted, page);
   const groups: [string, Item[]][] = [];
-  for (const { i, b } of rows) {
+  for (const { i, b } of sorted) {
     const last = groups.at(-1);
     if (last?.[0] === b) last[1].push(i); else groups.push([b, [i]]);
   }
+  const summary = ORDER.filter((k) => counts.get(k)).map((k) => `${counts.get(k)} ${k === "No date" ? "with no date" : k.toLowerCase()}`).join(" · ");
   return (
     <section>
+      <p className="loop-summary muted">{summary}</p>
+      {total > items.length && <p className="muted small">Showing {items.length} of {total} open loops.</p>}
       {groups.map(([k, list]) => (
         <div key={k} className="group">
           <h2 className={k === "Overdue" ? "danger" : ""}>{k} <span className="count">{counts.get(k)}</span></h2>
           {list.map((i) => <ItemRow key={i.id} item={i} onUpdate={onUpdate} />)}
         </div>
       ))}
-      <Pager page={p} pages={pages} total={sorted.length} onPage={setPage} />
     </section>
   );
 }

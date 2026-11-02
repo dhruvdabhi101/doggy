@@ -2,6 +2,7 @@ import { Database } from "bun:sqlite";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { CaptureStatus } from "./capture";
+import { applyMigrations, baseline, readSchemaVersion } from "./migrate";
 import { classify } from "./sources";
 
 const DB_PATH = process.env.DOGGY_DB ?? `${import.meta.dir}/../data/doggy.db`;
@@ -9,63 +10,6 @@ mkdirSync(dirname(DB_PATH), { recursive: true });
 
 export const db = new Database(DB_PATH, { create: true });
 db.exec("PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;");
-
-db.exec(`
-CREATE TABLE IF NOT EXISTS users (
-  id TEXT PRIMARY KEY, email TEXT NOT NULL UNIQUE, name TEXT, pw_hash TEXT NOT NULL,
-  tz TEXT NOT NULL DEFAULT 'UTC', created_at TEXT NOT NULL
-);
-CREATE TABLE IF NOT EXISTS devices (
-  id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  name TEXT NOT NULL, kind TEXT NOT NULL, token_hash TEXT NOT NULL UNIQUE,
-  last_seen_at TEXT, created_at TEXT NOT NULL
-);
-CREATE TABLE IF NOT EXISTS captures (
-  id INTEGER PRIMARY KEY AUTOINCREMENT, user_id TEXT NOT NULL, device_id TEXT NOT NULL,
-  app TEXT NOT NULL, bundle_id TEXT, window TEXT NOT NULL DEFAULT '', url TEXT,
-  text TEXT NOT NULL, captured_at TEXT NOT NULL, processed INTEGER NOT NULL DEFAULT 0
-);
-CREATE INDEX IF NOT EXISTS captures_pending ON captures(processed, user_id, device_id, app, window);
-CREATE TABLE IF NOT EXISTS notes (
-  id TEXT PRIMARY KEY, user_id TEXT NOT NULL, device_id TEXT NOT NULL,
-  text TEXT NOT NULL, source TEXT NOT NULL, created_at TEXT NOT NULL
-);
-CREATE TABLE IF NOT EXISTS items (
-  id TEXT PRIMARY KEY, user_id TEXT NOT NULL, type TEXT NOT NULL, title TEXT NOT NULL,
-  details TEXT, owner TEXT, counterparty TEXT, due_at TEXT,
-  status TEXT NOT NULL DEFAULT 'open', evidence TEXT,
-  source_kind TEXT NOT NULL, source_app TEXT, source_window TEXT, source_id TEXT,
-  confidence REAL NOT NULL DEFAULT 0.5,
-  created_at TEXT NOT NULL, updated_at TEXT NOT NULL, seq INTEGER NOT NULL,
-  title_key TEXT, evidence_key TEXT
-);
-CREATE INDEX IF NOT EXISTS items_user_seq ON items(user_id, seq);
-CREATE TABLE IF NOT EXISTS counters (name TEXT PRIMARY KEY, value INTEGER NOT NULL);
-INSERT OR IGNORE INTO counters VALUES ('seq', 0);
-
-CREATE VIRTUAL TABLE IF NOT EXISTS items_fts USING fts5(
-  title, details, evidence, owner, counterparty, content='items', content_rowid='rowid'
-);
-CREATE TRIGGER IF NOT EXISTS items_ai AFTER INSERT ON items BEGIN
-  INSERT INTO items_fts(rowid, title, details, evidence, owner, counterparty)
-  VALUES (new.rowid, new.title, new.details, new.evidence, new.owner, new.counterparty);
-END;
-CREATE TRIGGER IF NOT EXISTS items_au AFTER UPDATE ON items BEGIN
-  INSERT INTO items_fts(items_fts, rowid, title, details, evidence, owner, counterparty)
-  VALUES ('delete', old.rowid, old.title, old.details, old.evidence, old.owner, old.counterparty);
-  INSERT INTO items_fts(rowid, title, details, evidence, owner, counterparty)
-  VALUES (new.rowid, new.title, new.details, new.evidence, new.owner, new.counterparty);
-END;
-CREATE VIRTUAL TABLE IF NOT EXISTS captures_fts USING fts5(
-  app, window, text, content='captures', content_rowid='id'
-);
-CREATE TRIGGER IF NOT EXISTS captures_ai AFTER INSERT ON captures BEGIN
-  INSERT INTO captures_fts(rowid, app, window, text) VALUES (new.id, new.app, new.window, new.text);
-END;
-CREATE TRIGGER IF NOT EXISTS captures_ad AFTER DELETE ON captures BEGIN
-  INSERT INTO captures_fts(captures_fts, rowid, app, window, text) VALUES ('delete', old.id, old.app, old.window, old.text);
-END;
-`);
 
 export const now = () => new Date().toISOString();
 export const uid = () => crypto.randomUUID();
@@ -77,58 +21,29 @@ export function textKey(s: string | null | undefined): string | null {
   return k.length ? k : null;
 }
 
-for (const sql of [
-  "ALTER TABLE items ADD COLUMN title_key TEXT",
-  "ALTER TABLE items ADD COLUMN evidence_key TEXT",
-  "ALTER TABLE captures ADD COLUMN source_key TEXT",
-  "ALTER TABLE captures ADD COLUMN source_kind TEXT",
-  "ALTER TABLE captures ADD COLUMN skip_reason TEXT",
-]) {
-  try { db.exec(sql); } catch (e) {
-    if (!/duplicate column/i.test((e as Error).message)) throw e;
-  }
-}
-db.exec(`
-CREATE INDEX IF NOT EXISTS items_title_key ON items(user_id, title_key);
-CREATE INDEX IF NOT EXISTS items_evidence_key ON items(user_id, evidence_key);
-CREATE INDEX IF NOT EXISTS captures_pending_source ON captures(processed, user_id, device_id, source_key, window);
-CREATE TABLE IF NOT EXISTS seen_lines (
-  user_id TEXT NOT NULL, scope TEXT NOT NULL, hash TEXT NOT NULL, seen_at TEXT NOT NULL,
-  PRIMARY KEY (user_id, scope, hash)
-) WITHOUT ROWID;
-CREATE INDEX IF NOT EXISTS seen_lines_age ON seen_lines(seen_at);
-CREATE TABLE IF NOT EXISTS llm_usage (
-  day TEXT NOT NULL, user_id TEXT NOT NULL, kind TEXT NOT NULL,
-  calls INTEGER NOT NULL DEFAULT 0, input_tokens INTEGER NOT NULL DEFAULT 0, output_tokens INTEGER NOT NULL DEFAULT 0,
-  PRIMARY KEY (day, user_id, kind)
-);
-CREATE TABLE IF NOT EXISTS source_prefs (
-  user_id TEXT NOT NULL, source_key TEXT NOT NULL, lane TEXT NOT NULL, updated_at TEXT NOT NULL,
-  PRIMARY KEY (user_id, source_key)
-);
-CREATE TABLE IF NOT EXISTS source_stats (
-  user_id TEXT NOT NULL, source_key TEXT NOT NULL, kind TEXT NOT NULL,
-  episodes INTEGER NOT NULL DEFAULT 0, calls_chars INTEGER NOT NULL DEFAULT 0,
-  items_kept INTEGER NOT NULL DEFAULT 0, last_seen_at TEXT NOT NULL,
-  PRIMARY KEY (user_id, source_key)
-);
-`);
-{
-  const pending = db.query(
+function backfillKeys(database: Database) {
+  const pendingCaps = database.query(
     "SELECT id, app, bundle_id, url FROM captures WHERE processed = ? AND source_key IS NULL",
   ).all(CaptureStatus.PENDING) as { id: number; app: string; bundle_id: string | null; url: string | null }[];
-  const fill = db.query("UPDATE captures SET source_key = ?, source_kind = ? WHERE id = ?");
-  for (const r of pending) {
+  const fillCap = database.query("UPDATE captures SET source_key = ?, source_kind = ? WHERE id = ?");
+  for (const r of pendingCaps) {
     const s = classify({ app: r.app, bundleId: r.bundle_id, url: r.url });
-    fill.run(s.key, s.kind, r.id);
+    fillCap.run(s.key, s.kind, r.id);
   }
-}
-{
-  const pending = db.query(
+  const pendingItems = database.query(
     "SELECT id, title, evidence FROM items WHERE title_key IS NULL OR (evidence IS NOT NULL AND evidence_key IS NULL)",
   ).all() as { id: string; title: string; evidence: string | null }[];
-  const fill = db.query("UPDATE items SET title_key = ?, evidence_key = ? WHERE id = ?");
-  for (const r of pending) fill.run(textKey(r.title), textKey(r.evidence), r.id);
+  const fillItem = database.query("UPDATE items SET title_key = ?, evidence_key = ? WHERE id = ?");
+  for (const r of pendingItems) fillItem.run(textKey(r.title), textKey(r.evidence), r.id);
+}
+
+applyMigrations(db, [
+  baseline,
+  { version: 2, name: "backfill derived keys", up: backfillKeys },
+]);
+
+export function schemaVersion(): number {
+  return readSchemaVersion(db);
 }
 
 /** True when this user already has an item with this title, or with this quote. Indexed lookups, any status. */
@@ -215,6 +130,41 @@ export function updateItem(userId: string, id: string, patch: ItemPatch): Item |
   return getItem(userId, id);
 }
 
+export type ItemListQuery = {
+  types?: string[];
+  status?: string;
+  excludeStatus?: string;
+  sort: "due" | "created";
+  limit: number;
+  offset: number;
+};
+
+const ITEM_ORDER = {
+  due: "CASE WHEN due_at IS NULL THEN 1 ELSE 0 END, due_at ASC, created_at DESC, id ASC",
+  created: "created_at DESC, id DESC",
+} as const;
+
+function itemWhere(userId: string, q: Pick<ItemListQuery, "types" | "status" | "excludeStatus">) {
+  const where = ["user_id = ?"];
+  const args: (string | number)[] = [userId];
+  if (q.types?.length) {
+    where.push(`type IN (${q.types.map(() => "?").join(",")})`);
+    args.push(...q.types);
+  }
+  if (q.status) { where.push("status = ?"); args.push(q.status); }
+  else if (q.excludeStatus) { where.push("status != ?"); args.push(q.excludeStatus); }
+  return { where: where.join(" AND "), args };
+}
+
+export function listItems(userId: string, q: ItemListQuery): { items: Item[]; total: number } {
+  const { where, args } = itemWhere(userId, q);
+  const total = (db.query(`SELECT COUNT(*) AS n FROM items WHERE ${where}`).get(...args) as { n: number }).n;
+  const rows = db.query(
+    `SELECT * FROM items WHERE ${where} ORDER BY ${ITEM_ORDER[q.sort]} LIMIT ? OFFSET ?`,
+  ).all(...args, q.limit, q.offset) as ItemRow[];
+  return { items: rows.map(toItem), total };
+}
+
 const STOP = new Set(
   "the a an and or of to in on for with what when where who why how did do does i me my we our you your is are was were be been it this that at by from about any have has had should can could will would tell show".split(" "),
 );
@@ -228,26 +178,48 @@ export function ftsQuery(q: string): string | null {
   return [...new Set(words)].slice(0, 12).map((w) => `"${w}"*`).join(" OR ");
 }
 
-export function searchItems(userId: string, q: string, limit = 20): Item[] {
+export function searchItems(userId: string, q: string, limit = 20, offset = 0, type?: string): Item[] {
   const fq = ftsQuery(q);
   if (!fq) return [];
+  const typeSql = type ? " AND items.type = ?" : "";
+  const args = type ? [fq, userId, type, limit, offset] : [fq, userId, limit, offset];
   const rows = db.query(
     `SELECT items.* FROM items_fts JOIN items ON items.rowid = items_fts.rowid
-     WHERE items_fts MATCH ? AND items.user_id = ? AND items.status != 'dismissed'
-     ORDER BY bm25(items_fts) LIMIT ?`,
-  ).all(fq, userId, limit) as ItemRow[];
+     WHERE items_fts MATCH ? AND items.user_id = ? AND items.status != 'dismissed'${typeSql}
+     ORDER BY bm25(items_fts) LIMIT ? OFFSET ?`,
+  ).all(...args) as ItemRow[];
   return rows.map(toItem);
 }
 
+export function countItemHits(userId: string, q: string, type?: string): number {
+  const fq = ftsQuery(q);
+  if (!fq) return 0;
+  const typeSql = type ? " AND items.type = ?" : "";
+  const args = type ? [fq, userId, type] : [fq, userId];
+  return (db.query(
+    `SELECT COUNT(*) AS n FROM items_fts JOIN items ON items.rowid = items_fts.rowid
+     WHERE items_fts MATCH ? AND items.user_id = ? AND items.status != 'dismissed'${typeSql}`,
+  ).get(...args) as { n: number }).n;
+}
+
 export type CaptureHit = { id: number; app: string; window: string; text: string; capturedAt: string };
-export function searchCaptures(userId: string, q: string, limit = 10): CaptureHit[] {
+export function searchCaptures(userId: string, q: string, limit = 10, offset = 0): CaptureHit[] {
   const fq = ftsQuery(q);
   if (!fq) return [];
   return db.query(
     `SELECT c.id, c.app, c.window, snippet(captures_fts, 2, '', '', ' … ', 48) AS text, c.captured_at AS capturedAt
      FROM captures_fts JOIN captures c ON c.id = captures_fts.rowid
-     WHERE captures_fts MATCH ? AND c.user_id = ? ORDER BY bm25(captures_fts) LIMIT ?`,
-  ).all(fq, userId, limit) as CaptureHit[];
+     WHERE captures_fts MATCH ? AND c.user_id = ? ORDER BY bm25(captures_fts) LIMIT ? OFFSET ?`,
+  ).all(fq, userId, limit, offset) as CaptureHit[];
+}
+
+export function countCaptureHits(userId: string, q: string): number {
+  const fq = ftsQuery(q);
+  if (!fq) return 0;
+  return (db.query(
+    `SELECT COUNT(*) AS n FROM captures_fts JOIN captures c ON c.id = captures_fts.rowid
+     WHERE captures_fts MATCH ? AND c.user_id = ?`,
+  ).get(fq, userId) as { n: number }).n;
 }
 
 export const NEAR_DUPLICATE_JACCARD = 0.6;

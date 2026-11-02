@@ -37,7 +37,7 @@ Which apps and sites Doggy reads, and how soon. A source appears after the worke
 
 | Method | Path | Body | Response |
 |---|---|---|---|
-| GET | `/api/sources` | – | `{sources:[Source]}`, most recently seen first |
+| GET | `/api/sources?limit=&offset=` | – | `{sources, total, limit, offset}`. Omit `limit` and `offset` to get every source. |
 | PUT | `/api/sources/:key` | `{lane: "fast"\|"slow"\|"skip"\|null}` | `{source: Source\|null}`. `null` clears the override. Other values → 400 |
 
 ```ts
@@ -85,10 +85,11 @@ type Item = {
 ```
 | Method | Path | Notes |
 |---|---|---|
-| GET | `/api/items?type=&status=&limit=` | newest first |
-| PATCH | `/api/items/:id` | `{status?, title?, dueAt?}` |
-| GET | `/api/changes?since=<seq>` | `{items:[Item], cursor:<seq>}` incremental sync |
-| GET | `/api/search?q=` | `{items:[Item], captures:[{id,app,window,text,capturedAt}]}` |
+| GET | `/api/items?type=&status=&excludeStatus=&sort=due\|created&limit=&offset=` | `{items, total, limit, offset}`. `sort` defaults to `due` (null due dates last). `limit` defaults to 200, max 500. `offset` defaults to 0. |
+| GET | `/api/export` | attachment `doggy-export.json` of this user's items. 10 requests per 10 minutes. |
+| PATCH | `/api/items/:id` | `{status?, title?, dueAt?, type?, details?, owner?, counterparty?}` |
+| GET | `/api/changes?since=<seq>` | `{items:[Item], cursor:<seq>}`. Up to 1000 rows with `seq` greater than `since`. |
+| GET | `/api/search?q=&type=&limit=&offset=&captureLimit=&captureOffset=` | `{items, captures, itemTotal, captureTotal, limit, offset}`. Item `limit` defaults to 20, max 50. Capture `captureLimit` defaults to 8, max 50. |
 | POST | `/api/ask` | `{question}` → `{answer, sources:[Item]}` |
 
 ## MCP

@@ -36,8 +36,10 @@ clients ◀── GET /api/changes?since=seq (incremental) / /api/items / /api/s
 
 ## Key design points
 - **Server is the source of truth.** Every device has its own token (`devices` table); every device of a user reads
-  the same rows. Sync is `GET /api/changes?since=<seq>`: each insert or update bumps a global `seq` counter. The web
-  app polls every 10s and when the tab becomes visible. Native/offline clients should use the same endpoint.
+  the same rows. `GET /api/changes?since=<seq>` returns up to 1000 changed items and a cursor. The web app does not
+  download that history for the screen. Open loops polls `GET /api/items?status=open&type=task,commitment,event`
+  every 10s. Memory and search ask for one page (`limit` and `offset`). Agents and a future offline cache still use
+  `/api/changes`.
 - **The agents diff, the server dedupes and groups.** Agents send only new lines per window title. Titles change, so
   the server fingerprints every line per (user, source) in `seen_lines` and stores only lines it has not seen in
   the last 30 days. The source is a bundle id or URL host, never a window title. The worker groups pending captures
@@ -146,6 +148,14 @@ Bun loads `server/.env` on its own. To force the heuristic path, set the key to 
 - **DNS:** Cloudflare, `A doggy → 187.126.120.197`, DNS only (grey cloud) so Caddy can get its own certificate.
 - **Deploy:** push to `main`, then `ssh root@187.126.120.197 /srv/doggy/deploy/deploy.sh` (git pull, install,
   build web, restart, health check). First-time setup: `deploy/setup-vps.sh` (needs `unzip`).
+- **Database.** `server/src/migrate.ts` applies numbered steps on startup and records them in `schema_migrations`.
+  Steps are additive (`CREATE IF NOT EXISTS`, `ALTER` that ignores a column that already exists). A crash before the
+  version row commits runs that step again. `deploy/deploy.sh` copies the live file with `VACUUM INTO` to
+  `/var/lib/doggy/backups/pre-deploy-<timestamp>.db` before restart, and refuses the new process if `/api/health`
+  fails or if `users`, `items`, or `notes` counts are lower than the snapshot. `doggy-backup.timer` writes
+  `daily-YYYY-MM-DD.db` and keeps 14 of those. These files sit on the same disk as the live database. Copy them
+  off the machine if that disk dies. To restore, stop `doggy`, replace `/var/lib/doggy/doggy.db` with the snapshot
+  (and remove `doggy.db-wal` and `doggy.db-shm`), then start `doggy`.
 - **Publish desktop builds:** `deploy/publish-apps.sh root@187.126.120.197` from a Mac with Swift and the .NET SDK.
   It builds both apps and swaps each file in place atomically. `/api/downloads` returns each file's URL with its
   modification time as `?v=`, so a new upload is a new URL and no cache serves an old build. The Devices page shows

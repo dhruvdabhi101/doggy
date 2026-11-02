@@ -15,6 +15,8 @@ export type SourceInfo = {
   laneWhy: "override" | "adaptive" | "default"; override: Lane | null; episodes: number; itemsKept: number; lastSeenAt: string | null;
 };
 export type CaptureHit = { id: number; app: string; window: string; text: string; capturedAt: string };
+export type ItemPage = { items: Item[]; total: number; limit: number; offset: number };
+export type SearchPage = { items: Item[]; captures: CaptureHit[]; itemTotal: number; captureTotal: number; limit: number; offset: number };
 
 const KEY = "doggy.session";
 export function loadSession(): Session | null {
@@ -50,11 +52,34 @@ export const api = {
       body: JSON.stringify({ email, password, name, tz: Intl.DateTimeFormat().resolvedOptions().timeZone, deviceName: deviceName(), deviceKind: deviceKind() }),
     }),
   changes: (since: number) => call<{ items: Item[]; cursor: number }>(`/api/changes?since=${since}`),
+  items: (q: { type?: string; status?: string; excludeStatus?: string; sort?: "due" | "created"; limit?: number; offset?: number } = {}) => {
+    const p = new URLSearchParams();
+    for (const [k, v] of Object.entries(q)) if (v !== undefined) p.set(k, String(v));
+    return call<ItemPage>(`/api/items?${p}`);
+  },
   note: (text: string, source: "voice" | "text") =>
     call<{ items: Item[]; warning?: string }>("/api/notes", { method: "POST", body: JSON.stringify({ text, source }) }),
   patch: (id: string, patch: ItemPatch) =>
     call<{ item: Item }>(`/api/items/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify(patch) }),
-  search: (q: string) => call<{ items: Item[]; captures: CaptureHit[] }>(`/api/search?q=${encodeURIComponent(q)}`),
+  search: (q: string, page: { limit?: number; offset?: number; captureLimit?: number; captureOffset?: number; type?: string } = {}) => {
+    const p = new URLSearchParams({ q });
+    for (const [k, v] of Object.entries(page)) if (v !== undefined) p.set(k, String(v));
+    return call<SearchPage>(`/api/search?${p}`);
+  },
+  exportItems: async () => {
+    const token = loadSession()?.token;
+    const res = await fetch("/api/export", { headers: token ? { authorization: `Bearer ${token}` } : {} });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new ApiError(res.status, body.error ?? `Request failed (${res.status})`);
+    }
+    const blob = await res.blob();
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = "doggy-export.json";
+    a.click();
+    URL.revokeObjectURL(a.href);
+  },
   ask: (question: string) => call<{ answer: string; sources: Item[] }>("/api/ask", { method: "POST", body: JSON.stringify({ question }) }),
   logout: () => call<{ ok: boolean }>("/api/auth/logout", { method: "POST" }),
   devices: () => call<{ devices: Device[] }>("/api/devices"),
@@ -64,7 +89,12 @@ export const api = {
     call<{ name: string; redirectHost: string }>(`/oauth/client?client_id=${encodeURIComponent(clientId)}&redirect_uri=${encodeURIComponent(redirectUri)}`),
   oauthApprove: (params: Record<string, string>, approve: boolean) =>
     call<{ redirect: string }>("/oauth/approve", { method: "POST", body: JSON.stringify({ ...params, approve }) }),
-  sources: () => call<{ sources: SourceInfo[] }>("/api/sources"),
+  sources: (page?: { limit: number; offset: number }) => {
+    const p = new URLSearchParams();
+    if (page) { p.set("limit", String(page.limit)); p.set("offset", String(page.offset)); }
+    const qs = p.size ? `?${p}` : "";
+    return call<{ sources: SourceInfo[]; total: number; limit: number; offset: number }>(`/api/sources${qs}`);
+  },
   setSourceLane: (key: string, lane: Lane | null) =>
     call<{ source: SourceInfo | null }>(`/api/sources/${encodeURIComponent(key)}`, { method: "PUT", body: JSON.stringify({ lane }) }),
   downloads: () => call<Downloads>("/api/downloads"),

@@ -47,6 +47,10 @@ voice/text notes, and answer questions.
 
 - [x] **Deployed:** https://doggy.ruv.world (VPS + Caddy + Let's Encrypt, systemd service, deploy from git with
       `deploy/deploy.sh`). See TECHNICAL.md → Production deployment.
+- [x] **Durable SQLite (2026-11-03):** numbered migrations in `schema_migrations`, a `VACUUM INTO` snapshot before
+      every restart, and a daily snapshot timer. Counts of users, items, and notes must not fall across a deploy.
+      Snapshots are on the same disk. Copy them off the box. Postgres was not adopted. The failure mode was a missing
+      backup and unversioned alters, not the engine.
 - [x] **iOS-ready PWA:** PNG icons (180/192/512, opaque), manifest with shortcuts, offline shell cache, and an
       "Add to Home Screen" hint on iOS Safari.
 - [x] **Desktop apps with UI, downloadable from the Devices page:**
@@ -74,7 +78,7 @@ voice/text notes, and answer questions.
 2. **Per-app parsers** (like minimi's): structured extraction of sender/time/thread for WhatsApp, Slack, Teams,
    Gmail, Outlook on Mac and Windows, falling back to the generic tree walk for other apps.
 3. **Windows field test**, plus fixes per app (see agents/windows/README.md).
-4. **Deploy** the server (Fly.io/Railway with a volume, or a VPS) behind HTTPS so phones work; add Litestream backups.
+4. Copy `/var/lib/doggy/backups/` off the VPS. The app is already on https://doggy.ruv.world. Snapshots are `VACUUM INTO` files on that same disk, because there is no off-site bucket to point Litestream at.
 5. **Reminders:** web push notifications for due/overdue items, plus a daily digest.
 6. **Better voice:** record with MediaRecorder and transcribe server-side (Deepgram) for accuracy and long notes.
 7. **Embeddings + hybrid search** for "ask" (sqlite-vec), plus people/entity resolution (Raj = raj@acme = +91…).

@@ -1,5 +1,5 @@
 // Makes the app installable and caches the shell. API, OAuth and MCP calls always go to the network.
-const SHELL = "doggy-shell-v4";
+const SHELL = "doggy-shell-v5";
 self.addEventListener("install", (e) => { self.skipWaiting(); e.waitUntil(caches.open(SHELL).then((c) => c.addAll(["/", "/icon.svg", "/icon-192.png", "/apple-touch-icon.png", "/manifest.webmanifest"]))); });
 self.addEventListener("activate", (e) => e.waitUntil(
   caches.keys().then((ks) => Promise.all(ks.filter((k) => k !== SHELL).map((k) => caches.delete(k)))).then(() => self.clients.claim()),

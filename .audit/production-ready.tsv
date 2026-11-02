@@ -1,0 +1,6 @@
+ts	phase	decision	why	evidence	result
+2026-11-02T20:20:54Z	start	Began the production-ready run	No earlier rows in this file	cursor session doggy	open
+2026-11-02T20:20:54Z	frame	Keep SQLite and add numbered migrations plus snapshots	The live file had no backup. Moving to Postgres could wipe the 35 items. The failure was the missing copy and the unversioned alters.	docs/TECHNICAL.md	chosen
+2026-11-02T20:20:54Z	snapshot	Copied the live database off the VPS before any restart	A snapshot on the same disk does not survive disk loss	/Users/dhruv/Work/doggy-backups/prechange-20261102T200912Z.db	integrity ok users 4 items 35 captures 3187 notes 5 devices 12
+2026-11-02T20:20:54Z	paging	Memory search and sources request limit and offset. Open loops still load the working set.	Paging the open list split a due-date group. That set is what the person works from.	server/src/durable.test.ts	tests passed
+2026-11-02T20:20:54Z	ui	Signed up in Chrome, saw an empty list, then one grouped task, snooze, and page 1 of 2 for 25 items	The pager has to be driven by the server total	/tmp/doggy-ui-check.ts	ui-ok

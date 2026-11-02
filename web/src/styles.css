@@ -125,6 +125,8 @@ pre { background: var(--surface-2); padding: 12px; border-radius: 10px; overflow
 .shell.has-composer { padding-bottom: calc(120px + env(safe-area-inset-bottom)); }
 .top { position: sticky; top: 0; z-index: 5; display: flex; align-items: center; justify-content: space-between; gap: 12px;
   padding: calc(12px + env(safe-area-inset-top)) 0 12px; background: color-mix(in srgb, var(--bg) 88%, transparent); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); }
+.top-actions { display: flex; align-items: center; }
+.loop-summary { margin: 16px 0 0; }
 .tabs { display: flex; gap: 2px; }
 .tabs a { display: inline-flex; align-items: center; gap: 7px; padding: 8px 12px; border-radius: 10px; color: var(--muted); font-weight: 500; text-decoration: none; font-size: 14.5px; }
 .tabs a:hover { color: var(--text); }

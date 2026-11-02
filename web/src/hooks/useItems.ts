@@ -1,25 +1,32 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, ApiError, type Item } from "../lib/api";
 
-/** All of the user's items, kept current with incremental sync. */
+/** Open tasks, commitments, and events. Memory pages its own query. */
 export function useItems(onUnauthorized: () => void) {
   const [items, setItems] = useState<Map<string, Item>>(new Map());
   const [loaded, setLoaded] = useState(false);
-  const cursor = useRef(0);
+  const [total, setTotal] = useState(0);
+  const inflight = useRef(new Set<string>());
   const upsert = useCallback((list: Item[]) => {
     if (list.length) setItems((m) => { const n = new Map(m); list.forEach((i) => n.set(i.id, i)); return n; });
   }, []);
+  const begin = useCallback((id: string) => { inflight.current.add(id); }, []);
+  const end = useCallback((id: string) => { inflight.current.delete(id); }, []);
   const sync = useCallback(async () => {
     try {
-      let more = true;
-      while (more) {
-        const r = await api.changes(cursor.current);
-        upsert(r.items);
-        more = r.items.length >= 1000; cursor.current = r.cursor;
-      }
+      const r = await api.items({ status: "open", type: "task,commitment,event", sort: "due", limit: 500, offset: 0 });
+      setTotal(r.total);
+      setItems((prev) => {
+        const next = new Map(r.items.map((i) => [i.id, i]));
+        for (const id of inflight.current) {
+          const local = prev.get(id);
+          if (local) next.set(id, local);
+        }
+        return next;
+      });
       setLoaded(true);
     } catch (e) { if (e instanceof ApiError && e.status === 401) onUnauthorized(); }
-  }, [onUnauthorized, upsert]);
+  }, [onUnauthorized]);
   useEffect(() => {
     sync();
     const t = setInterval(sync, 10_000);
@@ -27,5 +34,5 @@ export function useItems(onUnauthorized: () => void) {
     document.addEventListener("visibilitychange", vis);
     return () => { clearInterval(t); document.removeEventListener("visibilitychange", vis); };
   }, [sync]);
-  return { items: [...items.values()], loaded, upsert };
+  return { items: [...items.values()], loaded, total, upsert, begin, end };
 }
