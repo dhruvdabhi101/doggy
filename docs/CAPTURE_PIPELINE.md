@@ -77,7 +77,7 @@ matched path prefix when the rule has one, so `x.com/messages` and `x.com` are s
 | Lane | Ready when | Why |
 |---|---|---|
 | fast | the episode has been quiet for `DOGGY_EPISODE_IDLE_MS` (45s), or holds 12k chars | Chats carry most commitments, and people expect them soon |
-| slow | its oldest capture is `DOGGY_SLOW_LANE_MS` old (60 min), or it holds 12k chars | Documents change slowly; one call an hour covers many edits |
+| slow | the clock-aligned `DOGGY_SLOW_LANE_MS` window (60 min) it started in has ended, or it holds 12k chars | Documents change slowly. Every slow episode from one window is ready at the same moment, so they share one packed call |
 | skip | immediately | Marked SKIPPED with a reason. No call |
 
 The lane of a source is decided in this order.
@@ -214,3 +214,18 @@ chars sent   old 377573   new 7880
 ```
 
 Run it on a copy of the production database to get the real numbers for 2026-11-02.
+
+## Measured on production data (2 November 2026)
+
+`bun run replay` on a copy of the production database, all 868 capture events of the day:
+
+| | Old pipeline | New pipeline |
+|---|---|---|
+| Model calls | 215 | 68 |
+| Source characters sent | 545,125 | 287,179 |
+
+All three real tasks from WhatsApp are still extracted. The fourth kept item came from Doggy's own page, which is now skipped on purpose.
+
+Clock-aligned slow windows did most of the call reduction. Before them, each slow episode became ready 60 minutes after its own first capture, so slow episodes rarely shared a call, and the same data needed 121 calls. Every call also carries the system prompt and the user's open and recently done items, so fewer calls cut tokens even when the source text is the same.
+
+The replay does not model adaptive demotion or the budget caps.

@@ -10,7 +10,7 @@
  */
 import { Database } from "bun:sqlite";
 import {
-  CALL_MAX_CHARS, EPISODE_IDLE_MS, EPISODE_MAX_CHARS, MIN_EPISODE_CHARS, SLOW_LANE_MS, filterNewLines, packEpisodes,
+  CALL_MAX_CHARS, EPISODE_IDLE_MS, EPISODE_MAX_CHARS, MIN_EPISODE_CHARS, SLOW_LANE_MS, filterNewLines, packEpisodes, slowFlushAt,
 } from "../src/capture";
 import { classify, resolveLane, type Lane, type Source } from "../src/sources";
 
@@ -41,13 +41,13 @@ function episodesOf(caps: Capture[], lane: Lane, key: string, text: (c: Capture)
   const close = () => {
     if (!cur) return;
     const full = cur.text.length >= EPISODE_MAX_CHARS;
-    cur.readyMs = full ? cur.lastMs : lane === "slow" ? cur.firstMs + SLOW_LANE_MS : cur.lastMs + EPISODE_IDLE_MS;
+    cur.readyMs = full ? cur.lastMs : lane === "slow" ? slowFlushAt(cur.firstMs) : cur.lastMs + EPISODE_IDLE_MS;
     cur.text = cur.text.slice(-EPISODE_MAX_CHARS);
     out.push(cur); cur = null;
   };
   for (const c of caps) {
     if (cur) {
-      const expired = lane === "slow" ? c.ms - cur.firstMs >= SLOW_LANE_MS : c.ms - cur.lastMs > EPISODE_IDLE_MS;
+      const expired = lane === "slow" ? c.ms >= slowFlushAt(cur.firstMs) : c.ms - cur.lastMs > EPISODE_IDLE_MS;
       if (expired || cur.text.length >= EPISODE_MAX_CHARS) close();
     }
     const t = text(c);

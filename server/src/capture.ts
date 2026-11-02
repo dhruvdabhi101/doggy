@@ -51,12 +51,20 @@ export const MIN_EPISODE_CHARS = 20;
 
 export type EpisodeTiming = { firstAt: string; lastAt: string; chars: number };
 
-/** Fast waits for the window to go quiet. Slow waits for its oldest capture to age. Skip never waits. */
+/**
+ * End of the clock-aligned slow window that holds `ms`. Every slow episode a user starts in the same window
+ * becomes ready at the same moment, so they share one packed call instead of one call each.
+ */
+export function slowFlushAt(ms: number): number {
+  return (Math.floor(ms / SLOW_LANE_MS) + 1) * SLOW_LANE_MS;
+}
+
+/** Fast waits for the window to go quiet. Slow waits for its clock window to end. Skip never waits. */
 export function isReady(lane: Lane, ep: EpisodeTiming, nowMs: number): boolean {
   if (lane === "skip" || ep.chars >= EPISODE_MAX_CHARS) return true;
   return lane === "fast"
     ? nowMs - Date.parse(ep.lastAt) >= EPISODE_IDLE_MS
-    : nowMs - Date.parse(ep.firstAt) >= SLOW_LANE_MS;
+    : nowMs >= slowFlushAt(Date.parse(ep.firstAt));
 }
 
 /** Greedy, in order. An episode is never split, so a call can hold one episode bigger than the limit. */

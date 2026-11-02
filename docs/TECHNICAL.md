@@ -42,7 +42,7 @@ clients ◀── GET /api/changes?since=seq (incremental) / /api/items / /api/s
   the server fingerprints every line per (user, source) in `seen_lines` and stores only lines it has not seen in
   the last 30 days. The source is a bundle id or URL host, never a window title. The worker groups pending captures
   into episodes per (user, device, source, window). Each source has a lane: chats are fast (45s of quiet), documents
-  and unknown apps are slow (oldest capture 60 min old), feeds and our own site are skipped with no call. Ready
+  and unknown apps are slow (flushed together when the clock hour ends), feeds and our own site are skipped with no call. Ready
   episodes of one user are packed into one call of up to ~24k chars. Capture extraction has a per-user and a global
   daily input-token cap. Failed extractions stay pending and are retried on the next tick. Details and tradeoffs are in
   [CAPTURE_PIPELINE.md](CAPTURE_PIPELINE.md).
@@ -76,7 +76,7 @@ clients ◀── GET /api/changes?since=seq (incremental) / /api/items / /api/s
 | `DOGGY_MODEL` | `claude-sonnet-5-5` | Voice/text note extraction and "ask" (low volume) |
 | `DOGGY_DB` | `server/data/doggy.db` | SQLite path |
 | `DOGGY_EPISODE_IDLE_MS` | `45000` | Fast lane: quiet time before a chat episode is extracted |
-| `DOGGY_SLOW_LANE_MS` | `3600000` | Slow lane: age of an episode's oldest capture before it is extracted |
+| `DOGGY_SLOW_LANE_MS` | `3600000` | Slow lane: length of the clock-aligned window. All slow episodes a user starts in one window are extracted together when it ends |
 | `DOGGY_USER_DAILY_INPUT_TOKENS` | `300000` | Per-user daily input-token cap on capture extraction (UTC day) |
 | `DOGGY_GLOBAL_DAILY_INPUT_TOKENS` | `3000000` | Daily input-token cap on capture extraction across all users |
 | `DOGGY_PUBLIC_HOST` | – | Extra host treated as our own site; its captures are skipped |
