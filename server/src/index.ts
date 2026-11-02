@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { serveStatic } from "hono/bun";
-import { existsSync } from "node:fs";
+import { existsSync, statSync } from "node:fs";
 import { login, requireAuth, signup, type AuthEnv } from "./auth";
 import {
   db, getItem, insertItem, now, searchCaptures, searchItems, toItem, uid, updateItem, openItems,
@@ -246,8 +246,14 @@ app.get("/mcp", (c) => c.body(null, 405));
 const DOWNLOADS = process.env.DOGGY_DOWNLOADS ?? `${import.meta.dir}/../data/downloads`;
 const DOWNLOAD_FILES = { mac: "Doggy-mac.dmg", windows: "Doggy-windows.exe" } as const;
 app.get("/api/downloads", (c) => {
-  const out: Record<string, string> = {};
-  for (const [k, f] of Object.entries(DOWNLOAD_FILES)) if (existsSync(`${DOWNLOADS}/${f}`)) out[k] = f;
+  const out: Record<string, { url: string; builtAt: string }> = {};
+  for (const [k, f] of Object.entries(DOWNLOAD_FILES)) {
+    const path = `${DOWNLOADS}/${f}`;
+    if (!existsSync(path)) continue;
+    const mtime = statSync(path).mtime;
+    // The version in the URL makes every new upload a new URL, so no browser or proxy cache can serve an old build.
+    out[k] = { url: `/downloads/${f}?v=${mtime.getTime()}`, builtAt: mtime.toISOString() };
+  }
   return c.json(out);
 });
 app.get("/downloads/:file", (c) => {

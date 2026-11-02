@@ -62,5 +62,8 @@ export const api = {
   sources: () => call<{ sources: SourceInfo[] }>("/api/sources"),
   setSourceLane: (key: string, lane: Lane | null) =>
     call<{ source: SourceInfo | null }>(`/api/sources/${encodeURIComponent(key)}`, { method: "PUT", body: JSON.stringify({ lane }) }),
-  downloads: () => call<{ mac?: string; windows?: string }>("/api/downloads"),
+  downloads: () => call<Downloads>("/api/downloads"),
 };
+
+export type Download = { url: string; builtAt: string };
+export type Downloads = { mac?: Download; windows?: Download };

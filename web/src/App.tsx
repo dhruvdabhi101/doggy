@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { api, ApiError, loadSession, saveSession, type CaptureHit, type Device, type Item, type ItemPatch, type ItemType, type Lane, type Session, type SourceInfo } from "./api";
+import { api, ApiError, loadSession, saveSession, type CaptureHit, type Device, type Downloads, type Item, type ItemPatch, type ItemType, type Lane, type Session, type SourceInfo } from "./api";
 import { useSpeech } from "./speech";
 import { Legal, legalPageFor } from "./Legal";
 
@@ -378,7 +378,7 @@ function Memory({ items, onUpdate }: { items: Item[]; onUpdate: OnUpdate }) {
 // ---------------- devices ----------------
 function Devices({ llm }: { llm: string }) {
   const [devices, setDevices] = useState<Device[]>([]);
-  const [downloads, setDownloads] = useState<{ mac?: string; windows?: string }>({});
+  const [downloads, setDownloads] = useState<Downloads>({});
   const load = () => api.devices().then((r) => setDevices(r.devices)).catch(() => {});
   useEffect(() => { load(); api.downloads().then(setDownloads).catch(() => {}); }, []);
   const origin = location.origin;
@@ -396,10 +396,14 @@ function Devices({ llm }: { llm: string }) {
       <div className="group"><h2>Capture from your computer</h2>
         <p className="muted small">Install the desktop app, sign in with this account, and Doggy picks up tasks and promises from what's on your screen. Pause it any time from the menu bar / tray.</p>
         <div className="downloads">
-          {downloads.mac && <a className="primary" href={`/downloads/${downloads.mac}`} download>Download for Mac</a>}
-          {downloads.windows && <a className="primary" href={`/downloads/${downloads.windows}`} download>Download for Windows</a>}
+          {downloads.mac && <a className="primary" href={downloads.mac.url} download>Download for Mac</a>}
+          {downloads.windows && <a className="primary" href={downloads.windows.url} download>Download for Windows</a>}
           {!downloads.mac && !downloads.windows && <span className="muted small">Desktop downloads aren't published on this server yet.</span>}
         </div>
+        {(downloads.mac || downloads.windows) && <p className="muted small">Latest build: {[
+          downloads.mac && `Mac ${fmtDate(downloads.mac.builtAt)}`,
+          downloads.windows && `Windows ${fmtDate(downloads.windows.builtAt)}`,
+        ].filter(Boolean).join(" · ")}. Download again to update.</p>}
         {downloads.mac && <p className="muted small">Mac: open the .dmg, drag Doggy to Applications, then right-click → Open the first time (the build isn't notarized yet). Grant Accessibility when asked.</p>}
         {downloads.windows && <p className="muted small">Windows: run the .exe; if SmartScreen warns, choose More info → Run anyway. Doggy lives in the system tray.</p>}
       </div>

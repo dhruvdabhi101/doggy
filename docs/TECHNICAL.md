@@ -146,5 +146,7 @@ Bun loads `server/.env` on its own. To force the heuristic path, set the key to 
 - **DNS:** Cloudflare, `A doggy → 187.126.120.197`, DNS only (grey cloud) so Caddy can get its own certificate.
 - **Deploy:** push to `main`, then `ssh root@187.126.120.197 /srv/doggy/deploy/deploy.sh` (git pull, install,
   build web, restart, health check). First-time setup: `deploy/setup-vps.sh` (needs `unzip`).
-- **Publish desktop builds:** `scp dist/mac/Doggy-mac.dmg dist/windows/Doggy-windows.exe root@187.126.120.197:/var/lib/doggy/downloads/`
-  then `chown doggy:doggy` them. The Devices page shows download buttons for whatever files exist.
+- **Publish desktop builds:** `deploy/publish-apps.sh root@187.126.120.197` from a Mac with Swift and the .NET SDK.
+  It builds both apps and swaps each file in place atomically. `/api/downloads` returns each file's URL with its
+  modification time as `?v=`, so a new upload is a new URL and no cache serves an old build. The Devices page shows
+  the build date of each file.
