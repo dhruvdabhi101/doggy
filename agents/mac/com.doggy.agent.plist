@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.doggy.agent</string>
+    <key>ProgramArguments</key>
+    <array>
+        <!-- Change to the absolute path of your installed binary -->
+        <string>/usr/local/bin/doggy-agent</string>
+        <string>run</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>ProcessType</key>
+    <string>Interactive</string>
+    <key>StandardErrorPath</key>
+    <string>/tmp/doggy-agent.log</string>
+    <key>StandardOutPath</key>
+    <string>/tmp/doggy-agent.log</string>
+</dict>
+</plist>

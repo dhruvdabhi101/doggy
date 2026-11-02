@@ -1,0 +1,11 @@
+node_modules/
+server/data/
+web/dist/
+agents/mac/.build/
+agents/windows/bin/
+agents/windows/obj/
+.env
+*.db
+*.db-*
+.DS_Store
+dist/
