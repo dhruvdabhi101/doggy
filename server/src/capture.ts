@@ -1,3 +1,5 @@
+import type { Lane } from "./sources";
+
 /**
  * Pure capture rules shared by the server and scripts/replay.ts: line fingerprints,
  * episode readiness, and packing episodes into model calls. No database here.
@@ -37,4 +39,34 @@ export function filterNewLines(text: string, seen: (hash: string) => boolean): L
     lines.push(line);
   }
   return { lines, newHashes };
+}
+
+export const EPISODE_IDLE_MS = Number(process.env.DOGGY_EPISODE_IDLE_MS ?? 45_000);
+export const SLOW_LANE_MS = Number(process.env.DOGGY_SLOW_LANE_MS ?? 60 * 60_000);
+/** One episode never sends more than this; the oldest text of a long episode is cut. */
+export const EPISODE_MAX_CHARS = 12_000;
+/** Episodes of one user are packed into a single call up to this much source text. */
+export const CALL_MAX_CHARS = 24_000;
+export const MIN_EPISODE_CHARS = 20;
+
+export type EpisodeTiming = { firstAt: string; lastAt: string; chars: number };
+
+/** Fast waits for the window to go quiet. Slow waits for its oldest capture to age. Skip never waits. */
+export function isReady(lane: Lane, ep: EpisodeTiming, nowMs: number): boolean {
+  if (lane === "skip" || ep.chars >= EPISODE_MAX_CHARS) return true;
+  return lane === "fast"
+    ? nowMs - Date.parse(ep.lastAt) >= EPISODE_IDLE_MS
+    : nowMs - Date.parse(ep.firstAt) >= SLOW_LANE_MS;
+}
+
+/** Greedy, in order. An episode is never split, so a call can hold one episode bigger than the limit. */
+export function packEpisodes<T extends { text: string }>(eps: T[], maxChars = CALL_MAX_CHARS): T[][] {
+  const packs: T[][] = [];
+  let cur: T[] = []; let size = 0;
+  for (const ep of eps) {
+    if (cur.length && size + ep.text.length > maxChars) { packs.push(cur); cur = []; size = 0; }
+    cur.push(ep); size += ep.text.length;
+  }
+  if (cur.length) packs.push(cur);
+  return packs;
 }

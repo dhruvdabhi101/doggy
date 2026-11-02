@@ -1,7 +1,7 @@
 import type { Context } from "hono";
 import type { AuthEnv } from "./auth";
 import { db, openItems, searchCaptures, searchItems, uid, now, type Item } from "./db";
-import { processSource } from "./pipeline";
+import { processSources } from "./pipeline";
 
 /**
  * Minimal MCP server (streamable HTTP transport, JSON responses only, stateless).
@@ -70,7 +70,7 @@ export async function handleMcp(c: Context<AuthEnv>) {
         const id = uid();
         db.query("INSERT INTO notes (id,user_id,device_id,text,source,created_at) VALUES (?,?,?,?,?,?)")
           .run(id, user.id, c.get("device").id, t, "text", now());
-        const items = await processSource(user, { kind: "text", text: t, sourceId: `note:${id}` });
+        const items = (await processSources(user, "text", [{ text: t, sourceId: `note:${id}` }])).flat();
         return text(`Saved. ${items.length ? "Extracted:\n" + items.map(fmt).join("\n") : ""}`);
       }
       return c.json({ jsonrpc: "2.0", id: msg.id, error: { code: -32602, message: `Unknown tool ${name}` } });

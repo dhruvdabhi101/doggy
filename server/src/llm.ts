@@ -30,6 +30,7 @@ const Extracted = z.object({
     due_at: z.string().nullable(),
     evidence: z.string(),
     confidence: z.number(),
+    source: z.number().int(),
   })),
   closes: z.array(z.object({ item_id: z.string(), evidence: z.string() })),
 });
@@ -46,7 +47,7 @@ const EXTRACT_SCHEMA = {
       items: {
         type: "object",
         additionalProperties: false,
-        required: ["type", "title", "details", "owner", "counterparty", "due_at", "evidence", "confidence"],
+        required: ["type", "title", "details", "owner", "counterparty", "due_at", "evidence", "confidence", "source"],
         properties: {
           type: { type: "string", enum: [...ITEM_TYPES] },
           title: { type: "string" },
@@ -56,6 +57,7 @@ const EXTRACT_SCHEMA = {
           due_at: nullable("string"),
           evidence: { type: "string" },
           confidence: { type: "number" },
+          source: { type: "integer" },
         },
       },
     },
@@ -73,7 +75,7 @@ const EXTRACT_SCHEMA = {
 
 const EXTRACT_SYSTEM = `You maintain a personal memory for one person ("the user") so they never forget what they committed to or were asked to do.
 
-You receive one source: either text the user spoke/typed to you directly, or text read from their screen (a chat, email, doc, calendar, etc.) captured by an accessibility reader. Screen text is noisy: it contains UI labels, menus, timestamps, and content from other people. Extract only what is worth remembering:
+You receive one or more sources, each wrapped in <source id="N">. A source is either a note the user spoke or typed to you directly (always sent alone), or text read from their screen (a chat, email, doc, calendar, etc.) by an accessibility reader. Screen text is noisy: it contains UI labels, menus, timestamps, and content from other people. Several screen sources in one request are unrelated episodes from different apps or windows. Judge each on its own and do not merge facts across them. Extract only what is worth remembering:
 
 - task: something the user must do (assigned to them, or they noted it for themselves).
 - commitment: something the user promised someone else ("I'll send it tomorrow"), or someone promised the user (owner = that person, counterparty = "me").
@@ -88,15 +90,15 @@ Rules:
 - title: short imperative or factual line (<= 90 chars), self-contained without the source.
 - evidence: a short verbatim quote from the source that supports the item. Never invent evidence.
 - confidence: 0-1, how sure you are this is a real, current item for this user.
+- source: the id of the source the evidence is quoted from.
 - Do not repeat anything already in the existing open items list. If the source shows an existing open item is now done (sent, completed, cancelled), add it to closes with a quote.
 - Return empty arrays when there is nothing worth keeping (that is the common case for screen text).`;
 
+export type ExtractSource = { app: string | null; window: string | null; url: string | null; text: string };
+
 export type ExtractInput = {
   kind: "capture" | "voice" | "text";
-  text: string;
-  app?: string | null;
-  window?: string | null;
-  url?: string | null;
+  sources: ExtractSource[];
   userName?: string | null;
   userEmail: string;
   tz: string;
@@ -110,9 +112,15 @@ export async function extract(input: ExtractInput): Promise<Extraction> {
     `User: ${input.userName ?? "(unknown name)"} <${input.userEmail}>`,
     `Current time: ${nowLocal} (${input.tz}); ISO now ${new Date().toISOString()}`,
     input.kind === "capture"
-      ? `Source: screen text from app "${input.app}" window "${input.window ?? ""}"${input.url ? ` url ${input.url}` : ""}`
+      ? `Sources: ${input.sources.length} screen text episode(s), each tagged with its app, window and url`
       : `Source: the user ${input.kind === "voice" ? "spoke" : "typed"} this note directly to you`,
   ].join("\n");
+  const attr = (v: string | null) => (v ?? "").replace(/["<>\n]/g, " ").slice(0, 300);
+  const body = input.sources.map((s, i) =>
+    input.kind === "capture"
+      ? `<source id="${i}" app="${attr(s.app)}" window="${attr(s.window)}" url="${attr(s.url)}">\n${s.text}\n</source>`
+      : `<source id="${i}">\n${s.text}\n</source>`,
+  ).join("\n\n");
   const existing = input.existing.length
     ? input.existing.map((i) => `- [${i.id}] (${i.type}) ${i.title}${i.dueAt ? ` due ${i.dueAt}` : ""}`).join("\n")
     : "(none)";
@@ -130,7 +138,7 @@ export async function extract(input: ExtractInput): Promise<Extraction> {
     system: EXTRACT_SYSTEM,
     messages: [{
       role: "user",
-      content: `${header}\n\nExisting open items:\n${existing}\n\n<source>\n${input.text}\n</source>`,
+      content: `${header}\n\nExisting open items:\n${existing}\n\n${body}`,
     }],
   } as any);
 
@@ -145,7 +153,10 @@ export async function extract(input: ExtractInput): Promise<Extraction> {
     return { items: [], closes: [] };
   }
   const known = new Set(input.existing.map((i) => i.id));
-  return { items: parsed.data.items, closes: parsed.data.closes.filter((c) => known.has(c.item_id)) };
+  return {
+    items: parsed.data.items.filter((it) => it.source >= 0 && it.source < input.sources.length),
+    closes: parsed.data.closes.filter((c) => known.has(c.item_id)),
+  };
 }
 
 export async function answer(question: string, tz: string, sources: { label: string; text: string }[]) {
@@ -189,22 +200,26 @@ function guessDue(s: string): string | null {
 }
 
 function heuristicExtract(input: ExtractInput): Extraction {
-  const sentences = input.text.split(/(?<=[.!?\n])\s+/).map((s) => s.trim()).filter((s) => s.length > 6);
   const items: Extraction["items"] = [];
-  for (const s of sentences) {
-    if (TASK_RE.test(s)) {
-      items.push({
-        type: /\bi'?ll|i will\b/i.test(s) ? "commitment" : "task",
-        title: s.slice(0, 90), details: null, owner: "me", counterparty: null,
-        due_at: guessDue(s), evidence: s.slice(0, 200), confidence: input.kind === "capture" ? 0.6 : 0.4,
+  input.sources.forEach((src, source) => {
+    const found: Extraction["items"] = [];
+    const sentences = src.text.split(/(?<=[.!?\n])\s+/).map((s) => s.trim()).filter((s) => s.length > 6);
+    for (const s of sentences) {
+      if (TASK_RE.test(s)) {
+        found.push({
+          type: /\bi'?ll|i will\b/i.test(s) ? "commitment" : "task",
+          title: s.slice(0, 90), details: null, owner: "me", counterparty: null,
+          due_at: guessDue(s), evidence: s.slice(0, 200), confidence: input.kind === "capture" ? 0.6 : 0.4, source,
+        });
+      }
+    }
+    if (input.kind !== "capture" && !found.length) {
+      found.push({
+        type: "memory", title: src.text.slice(0, 90), details: src.text.length > 90 ? src.text : null,
+        owner: "me", counterparty: null, due_at: guessDue(src.text), evidence: src.text.slice(0, 200), confidence: 0.6, source,
       });
     }
-  }
-  if (input.kind !== "capture" && !items.length) {
-    items.push({
-      type: "memory", title: input.text.slice(0, 90), details: input.text.length > 90 ? input.text : null,
-      owner: "me", counterparty: null, due_at: guessDue(input.text), evidence: input.text.slice(0, 200), confidence: 0.6,
-    });
-  }
-  return { items: input.kind === "capture" ? items.slice(0, 3) : items, closes: [] };
+    items.push(...(input.kind === "capture" ? found.slice(0, 3) : found));
+  });
+  return { items, closes: [] };
 }

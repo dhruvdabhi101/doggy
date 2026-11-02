@@ -8,7 +8,7 @@ import {
   type ItemPatch, type ItemRow,
 } from "./db";
 import { answer, hasLLM, MODEL, MODEL_FAST, ITEM_TYPES } from "./llm";
-import { processPendingCaptures, processSource } from "./pipeline";
+import { processPendingCaptures, processSources } from "./pipeline";
 import { handleMcp } from "./mcp";
 import { filterNewLines } from "./capture";
 import { classify } from "./sources";
@@ -109,7 +109,7 @@ app.post("/api/notes", async (c) => {
   db.query("INSERT INTO notes (id,user_id,device_id,text,source,created_at) VALUES (?,?,?,?,?,?)")
     .run(id, user.id, c.get("device").id, text, source, now());
   try {
-    const items = await processSource(user, { kind: source, text, sourceId: `note:${id}` });
+    const items = (await processSources(user, source, [{ text, sourceId: `note:${id}` }])).flat();
     return c.json({ note: { id }, items });
   } catch (e) {
     console.error("[notes] extraction failed:", (e as Error).message);
