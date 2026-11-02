@@ -32,6 +32,8 @@ Install from `dist/mac/Doggy-mac.dmg` by dragging Doggy to Applications, then op
   System Settings → Privacy & Security → Accessibility. The app checks every 3 s and starts capturing as soon as
   permission is granted, with no restart needed.
 - **Start at login** uses `SMAppService.mainApp`. This only works from the bundled app, not `swift run`.
+- **Don't capture <app>** stops reading the app you were last in. It changes to **Capture <app> again** once that app is ignored.
+- **Apps Doggy ignores…** lists the apps you excluded. Remove one, add any running app, or choose one from Applications. Changes apply within one capture tick (3s) and are saved to `excludeApps` in `agent.json`.
 - **Sign out** clears the token in `agent.json` but keeps the server and `excludeApps`. **Quit** exits the app.
 
 For development, `swift run DoggyApp` runs the app unbundled. Accessibility is then granted to your terminal.

@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Drawing;
 using System.Windows.Forms;
 
@@ -194,5 +195,94 @@ public sealed class QuickNoteForm : Form
             _text.ReadOnly = false;
             _text.Focus();
         }
+    }
+}
+
+public sealed class ExcludedAppsForm : Form
+{
+    private readonly ListBox _list = new() { Dock = DockStyle.Fill, IntegralHeight = false };
+    private readonly Button _remove = new() { Text = "Remove", AutoSize = true, Enabled = false };
+    private readonly ComboBox _running = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 220 };
+    private readonly Button _add = new() { Text = "Ignore this app", AutoSize = true };
+
+    public ExcludedAppsForm()
+    {
+        Text = "Doggy — Apps Doggy ignores";
+        Icon = TrayApp.LoadIcon();
+        StartPosition = FormStartPosition.CenterScreen;
+        ClientSize = new Size(440, 380);
+        MinimumSize = new Size(380, 320);
+        Padding = new Padding(10);
+
+        var layout = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 5 };
+        layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        layout.Controls.Add(new Label
+        {
+            Text = "Doggy never reads these apps. The change applies within a few seconds. Text already sent stays in your account until you delete it.",
+            AutoSize = true, MaximumSize = new Size(410, 0),
+        }, 0, 0);
+        layout.Controls.Add(_list, 0, 1);
+        var removeRow = new FlowLayoutPanel { AutoSize = true, Dock = DockStyle.Fill };
+        removeRow.Controls.Add(_remove);
+        layout.Controls.Add(removeRow, 0, 2);
+        var addRow = new FlowLayoutPanel { AutoSize = true, Dock = DockStyle.Fill };
+        addRow.Controls.Add(_running);
+        addRow.Controls.Add(_add);
+        layout.Controls.Add(addRow, 0, 3);
+        layout.Controls.Add(new Label
+        {
+            Text = "Always ignored: password managers and the lock and sign-in screens. Password fields are never read in any app.",
+            AutoSize = true, MaximumSize = new Size(410, 0), ForeColor = SystemColors.GrayText,
+        }, 0, 4);
+        Controls.Add(layout);
+
+        _list.SelectedIndexChanged += (_, _) => _remove.Enabled = _list.SelectedItem is not null;
+        _remove.Click += (_, _) => Change(_list.SelectedItem as string, excluded: false);
+        _add.Click += (_, _) => Change(_running.SelectedItem as string, excluded: true);
+        Activated += (_, _) => Reload();
+        Reload();
+    }
+
+    private void Change(string? app, bool excluded)
+    {
+        if (string.IsNullOrEmpty(app)) return;
+        try { AgentConfig.SetExcluded(app, excluded); }
+        catch (Exception ex)
+        {
+            MessageBox.Show("Could not update the apps Doggy ignores: " + ex.Message, "Doggy",
+                MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
+        Reload();
+    }
+
+    private void Reload()
+    {
+        var entries = AgentConfig.Load()?.ExcludeApps ?? new List<string>();
+        _list.BeginUpdate();
+        _list.Items.Clear();
+        foreach (var e in entries.Where(e => !string.IsNullOrWhiteSpace(e)).OrderBy(e => e, StringComparer.OrdinalIgnoreCase))
+            _list.Items.Add(e);
+        _list.EndUpdate();
+        _remove.Enabled = false;
+
+        string self = Process.GetCurrentProcess().ProcessName;
+        var running = Process.GetProcesses()
+            .Where(p => { try { return p.MainWindowHandle != IntPtr.Zero; } catch { return false; } })
+            .Select(p => p.ProcessName)
+            .Where(n => !string.Equals(n, self, StringComparison.OrdinalIgnoreCase)
+                        && !UiaCapturer.IsDefaultExcluded(n) && !AgentConfig.IsExcludedByUser(n))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(n => n, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        _running.BeginUpdate();
+        _running.Items.Clear();
+        foreach (var n in running) _running.Items.Add(n);
+        _running.EndUpdate();
+        if (_running.Items.Count > 0) _running.SelectedIndex = 0;
+        _add.Enabled = _running.Items.Count > 0;
     }
 }

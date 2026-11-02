@@ -45,6 +45,18 @@ public sealed class AgentConfig
         File.WriteAllText(ConfigPath, JsonSerializer.Serialize(this, JsonOpts));
     }
 
+    public static void SetExcluded(string processName, bool excluded)
+    {
+        var cfg = Load() ?? new AgentConfig();
+        cfg.ExcludeApps.RemoveAll(e => string.Equals(e, processName, StringComparison.OrdinalIgnoreCase));
+        if (excluded) cfg.ExcludeApps.Add(processName);
+        cfg.Save();
+    }
+
+    public static bool IsExcludedByUser(string processName) =>
+        Load()?.ExcludeApps.Any(e => !string.IsNullOrWhiteSpace(e) &&
+            processName.Contains(e, StringComparison.OrdinalIgnoreCase)) == true;
+
     public static bool IsPaused()
     {
         try { return File.Exists(PausePath); } catch { return false; }

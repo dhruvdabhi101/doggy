@@ -158,3 +158,99 @@ struct QuickNoteView: View {
         return parts.joined(separator: " · ")
     }
 }
+
+struct ExcludedAppsView: View {
+    @ObservedObject var model: AppModel
+    @State private var entries = ExcludedApps.entries
+    @State private var running: [NSRunningApplication] = []
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("Doggy never reads these apps. The change applies within a few seconds. Text already sent stays in your account until you delete it.")
+                .font(.callout).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            List {
+                if entries.isEmpty {
+                    Text("No apps yet. Add one below.").foregroundStyle(.secondary)
+                }
+                ForEach(entries, id: \.self) { entry in
+                    HStack(spacing: 10) {
+                        Image(nsImage: icon(for: entry)).resizable().frame(width: 20, height: 20)
+                        Text(displayName(for: entry))
+                        Spacer()
+                        Button("Remove") {
+                            if (try? ExcludedApps.remove(entry)) != nil { reload() }
+                        }
+                        .buttonStyle(.link)
+                    }
+                }
+            }
+            .frame(minHeight: 160)
+
+            HStack {
+                Menu("Add a running app") {
+                    ForEach(running, id: \.processIdentifier) { app in
+                        Button(app.localizedName ?? app.bundleIdentifier ?? "Unknown") {
+                            if model.setExcluded(true, name: app.localizedName ?? "", bundleId: app.bundleIdentifier) { reload() }
+                        }
+                    }
+                }
+                .fixedSize()
+                Button("Choose app…") { chooseApp() }
+                Spacer()
+            }
+
+            Text("Always ignored: password managers, Keychain Access, System Settings and the login screen. Password fields are never read in any app.")
+                .font(.caption).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(20)
+        .frame(width: 420)
+        .onAppear(perform: reload)
+        .onReceive(NotificationCenter.default.publisher(for: NSWorkspace.didLaunchApplicationNotification,
+                                                       object: NSWorkspace.shared)) { _ in reload() }
+    }
+
+    private func reload() {
+        entries = ExcludedApps.entries
+        running = NSWorkspace.shared.runningApplications
+            .filter { $0.activationPolicy == .regular && $0.processIdentifier != getpid() }
+            .filter { app in
+                let name = app.localizedName ?? ""
+                return !ExcludedApps.contains(name: name, bundleId: app.bundleIdentifier)
+                    && !ExcludedApps.isDefault(name: name, bundleId: app.bundleIdentifier)
+            }
+            .sorted { ($0.localizedName ?? "").localizedCaseInsensitiveCompare($1.localizedName ?? "") == .orderedAscending }
+    }
+
+    private func chooseApp() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.application]
+        panel.directoryURL = URL(fileURLWithPath: "/Applications")
+        panel.allowsMultipleSelection = true
+        panel.prompt = "Ignore"
+        NSApp.activate(ignoringOtherApps: true)
+        guard panel.runModal() == .OK else { return }
+        for url in panel.urls {
+            let bundle = Bundle(url: url)
+            let name = FileManager.default.displayName(atPath: url.path).replacingOccurrences(of: ".app", with: "")
+            model.setExcluded(true, name: name, bundleId: bundle?.bundleIdentifier)
+        }
+        reload()
+    }
+
+    private func appURL(for entry: String) -> URL? {
+        NSWorkspace.shared.urlForApplication(withBundleIdentifier: entry)
+    }
+
+    private func displayName(for entry: String) -> String {
+        guard let url = appURL(for: entry) else { return entry }
+        return FileManager.default.displayName(atPath: url.path).replacingOccurrences(of: ".app", with: "")
+    }
+
+    private func icon(for entry: String) -> NSImage {
+        if let url = appURL(for: entry) { return NSWorkspace.shared.icon(forFile: url.path) }
+        return NSWorkspace.shared.icon(for: .application)
+    }
+}

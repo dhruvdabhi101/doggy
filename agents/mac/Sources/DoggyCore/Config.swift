@@ -75,3 +75,36 @@ public func setPaused(_ paused: Bool) {
         try? FileManager.default.removeItem(at: Paths.paused)
     }
 }
+
+/// The user's own exclude list in ~/.doggy/agent.json. Entries are bundle ids when known, else app names.
+/// The capture loop re-reads the config every tick, so a change applies within one interval.
+public enum ExcludedApps {
+    public static var entries: [String] { AgentConfig.load()?.excludeApps ?? [] }
+
+    public static func contains(name: String, bundleId: String?) -> Bool {
+        isExcluded(name: name, bundleId: bundleId, extra: entries)
+    }
+
+    public static func isDefault(name: String, bundleId: String?) -> Bool {
+        isExcluded(name: name, bundleId: bundleId, extra: [])
+    }
+
+    public static func add(name: String, bundleId: String?) throws {
+        let entry = (bundleId?.isEmpty == false ? bundleId! : name)
+        try update { list in
+            if !list.contains(where: { $0.caseInsensitiveCompare(entry) == .orderedSame }) { list.append(entry) }
+        }
+    }
+
+    public static func remove(_ entry: String) throws {
+        try update { list in list.removeAll { $0.caseInsensitiveCompare(entry) == .orderedSame } }
+    }
+
+    private static func update(_ change: (inout [String]) -> Void) throws {
+        var cfg = AgentConfig.load() ?? AgentConfig(server: AgentConfig.defaultServer, token: "")
+        var list = cfg.excludeApps ?? []
+        change(&list)
+        cfg.excludeApps = list
+        try cfg.save()
+    }
+}

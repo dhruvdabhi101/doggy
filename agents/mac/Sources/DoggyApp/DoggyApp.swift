@@ -108,6 +108,34 @@ final class AppModel: ObservableObject {
         show("signin", title: "Sign in to Doggy") { SignInView(model: self) }
     }
 
+    func showExcludedApps() {
+        show("excluded", title: "Apps Doggy ignores") { ExcludedAppsView(model: self) }
+    }
+
+    /// Adds or removes an app from the exclude list. Returns false and shows why when the config can't be written.
+    @discardableResult
+    func setExcluded(_ excluded: Bool, name: String, bundleId: String?) -> Bool {
+        do {
+            if excluded {
+                try ExcludedApps.add(name: name, bundleId: bundleId)
+            } else {
+                for entry in ExcludedApps.entries
+                where isExcluded(name: name, bundleId: bundleId, extra: [entry]) && !ExcludedApps.isDefault(name: name, bundleId: bundleId) {
+                    try ExcludedApps.remove(entry)
+                }
+            }
+            objectWillChange.send()
+            return true
+        } catch {
+            let alert = NSAlert()
+            alert.messageText = "Couldn't update the apps Doggy ignores"
+            alert.informativeText = error.localizedDescription
+            NSApp.activate(ignoringOtherApps: true)
+            alert.runModal()
+            return false
+        }
+    }
+
     func showQuickNote() {
         guard isSignedIn else { return showSignIn() }
         show("note", title: "Quick note") { QuickNoteView(model: self) }
@@ -167,6 +195,14 @@ struct MenuContent: View {
                 .keyboardShortcut("n")
             Button(isPaused ? "Resume capture" : "Pause capture") { model.togglePause() }
                 .keyboardShortcut("p")
+            if let app = engine.lastApp, !ExcludedApps.isDefault(name: app.name, bundleId: app.bundleId) {
+                if ExcludedApps.contains(name: app.name, bundleId: app.bundleId) {
+                    Button("Capture \(app.name) again") { model.setExcluded(false, name: app.name, bundleId: app.bundleId) }
+                } else {
+                    Button("Don't capture \(app.name)") { model.setExcluded(true, name: app.name, bundleId: app.bundleId) }
+                }
+            }
+            Button("Apps Doggy ignores…") { model.showExcludedApps() }
         } else {
             Button("Sign in…") { model.showSignIn() }
         }

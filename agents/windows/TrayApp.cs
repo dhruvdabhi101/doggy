@@ -52,6 +52,9 @@ public sealed class TrayApp : ApplicationContext
     private readonly ToolStripMenuItem _noteItem;
     private readonly ToolStripMenuItem _pauseItem;
     private readonly ToolStripMenuItem _openItem;
+    private readonly ToolStripMenuItem _excludeAppItem;
+    private readonly ToolStripMenuItem _excludedListItem;
+    private ExcludedAppsForm? _excluded;
     private readonly ToolStripMenuItem _startupItem;
     private readonly ToolStripMenuItem _accountItem;
     private readonly System.Windows.Forms.Timer _refresh;
@@ -70,6 +73,8 @@ public sealed class TrayApp : ApplicationContext
         _noteItem = new ToolStripMenuItem("Quick note…", null, (_, _) => ShowQuickNote());
         _pauseItem = new ToolStripMenuItem("Pause capture", null, (_, _) => TogglePause());
         _openItem = new ToolStripMenuItem("Open Doggy", null, (_, _) => OpenDoggy());
+        _excludeAppItem = new ToolStripMenuItem("", null, (_, _) => ToggleLastAppExcluded()) { Visible = false };
+        _excludedListItem = new ToolStripMenuItem("Apps Doggy ignores…", null, (_, _) => ShowExcludedApps());
         _startupItem = new ToolStripMenuItem("Start with Windows", null, (_, _) => ToggleStartup());
         _accountItem = new ToolStripMenuItem("Sign out", null, (_, _) => SignOutOrIn());
         var exitItem = new ToolStripMenuItem("Exit", null, (_, _) => ExitApp());
@@ -78,7 +83,7 @@ public sealed class TrayApp : ApplicationContext
         _menu.Items.AddRange(new ToolStripItem[]
         {
             _statusItem, _detailItem, new ToolStripSeparator(),
-            _noteItem, _pauseItem, _openItem, new ToolStripSeparator(),
+            _noteItem, _pauseItem, _excludeAppItem, _excludedListItem, _openItem, new ToolStripSeparator(),
             _startupItem, _accountItem, exitItem,
         });
         _menu.Opening += (_, _) => RefreshUi();
@@ -150,6 +155,10 @@ public sealed class TrayApp : ApplicationContext
         _pauseItem.Enabled = signedIn;
         _noteItem.Enabled = signedIn;
         _accountItem.Text = signedIn ? "Sign out" : "Sign in…";
+        string? lastApp = _engine.LastApp;
+        _excludeAppItem.Visible = signedIn && !string.IsNullOrEmpty(lastApp) && !UiaCapturer.IsDefaultExcluded(lastApp);
+        if (_excludeAppItem.Visible)
+            _excludeAppItem.Text = AgentConfig.IsExcludedByUser(lastApp!) ? $"Capture {lastApp} again" : $"Don't capture {lastApp}";
         _startupItem.Checked = IsStartupEnabled();
 
         // NotifyIcon.Text is limited to 127 chars.
@@ -175,6 +184,23 @@ public sealed class TrayApp : ApplicationContext
         string url = AgentConfig.Load()?.Server is { Length: > 0 } s ? s : DefaultServer;
         try { Process.Start(new ProcessStartInfo(url) { UseShellExecute = true }); }
         catch (Exception ex) { Error("Could not open browser: " + ex.Message); }
+    }
+
+    private void ToggleLastAppExcluded()
+    {
+        string? app = _engine.LastApp;
+        if (string.IsNullOrEmpty(app)) return;
+        try { AgentConfig.SetExcluded(app, !AgentConfig.IsExcludedByUser(app)); }
+        catch (Exception ex) { Error("Could not update the apps Doggy ignores: " + ex.Message); }
+        RefreshUi();
+    }
+
+    private void ShowExcludedApps()
+    {
+        if (_excluded is { IsDisposed: false }) { _excluded.Activate(); return; }
+        _excluded = new ExcludedAppsForm();
+        _excluded.Show();
+        _excluded.Activate();
     }
 
     private void ShowQuickNote()
