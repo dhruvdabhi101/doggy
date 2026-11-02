@@ -32,6 +32,10 @@ voice/text notes, and answer questions.
       dedupes against open items; auto-closes loops when the source shows them done. Uses Claude (`claude-opus-5-5`)
       with server-side refusal fallback; rule-based fallback when no key.
 - [x] Episode batching: screen text grouped per (device, app, window), processed after 45s idle or 12k chars.
+- [x] Capture cost gates (2026-11-02): server-side seen-line dedupe per source, source registry with fast/slow/skip
+      lanes and per-user overrides (Devices → Sources), batched extraction per user tick, usage
+      ledger, 30-day expiry of processed screen text, near-duplicate guard, and `bun run replay` to measure it. See CAPTURE_PIPELINE.md.
+      **Verified** on a throwaway DB (heuristic and real-key runs). **Not yet measured on production captures.**
 - [x] Web app/PWA: open loops grouped by due date (overdue/today/week/later), mark done/dismiss, evidence and source
       on tap, Ask (cited answers), Memory (search + filters + matching screen text), Devices, voice and text composer.
       Desktop layout checked in headless Chrome.
@@ -62,6 +66,8 @@ voice/text notes, and answer questions.
 - [ ] Web app at real phone width (headless Chrome couldn't render narrower than about 500px) and voice on iOS Safari over HTTPS.
 
 ## Next (in order)
+0. **Replay production.** Copy `/var/lib/doggy/doggy.db`, run `bun run replay` for 2026-11-02 07:19 to 09:28 UTC,
+   and check that none of the 4 kept items would be skipped. Then deploy and watch `/api/usage`.
 1. **Accuracy loop.** Set the key and run a day of real capture. Hand-label about 200 episodes and measure precision
    and recall of tasks/commitments. Tune the prompt, `MIN_CONFIDENCE`, and episode sizing. Use the dismiss button
    as labels.
@@ -87,3 +93,12 @@ voice/text notes, and answer questions.
 - 2026-11-02: Cheap models by default. Capture extraction → `claude-haiku-5-5` ($0.10/$0.50 per MTok), notes and ask →
   `claude-sonnet-5-5`. Override with `DOGGY_MODEL_FAST` / `DOGGY_MODEL`. Accuracy should come from better input
   (per-app parsing, episodes), not a bigger model.
+- 2026-11-02: Cut capture model calls with gates on where text came from and whether it is new, never on its words
+  (keyword gating like `TASK_RE` was rejected as brittle). Observed that day: 604 capture events from one Mac in two
+  hours led to about 143 Haiku calls and 4 kept tasks, mostly from X, YouTube and WhatsApp Web. The server now drops
+  lines it already stored per source, skips feeds and our own site, reads documents hourly, batches ready episodes per
+  user, and records token usage. Server-only, so desktop agents need
+  no new release.
+- 2026-11-02: No daily token cap. A cap silently stops new screen tasks for the rest of the day, which is worse for
+  users than the cost. Usage is still recorded. Processed screen text expires after 30 days so the database stays
+  small. Items keep their quotes, so dedupe is unaffected.

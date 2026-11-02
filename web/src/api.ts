@@ -9,6 +9,11 @@ export type Item = {
 export type ItemPatch = Partial<Pick<Item, "status" | "title" | "type" | "dueAt" | "details" | "owner" | "counterparty">>;
 export type Device = { id: string; name: string; kind: string; lastSeenAt: string | null; createdAt: string };
 export type Session = { token: string; user: { id: string; email: string; name: string | null } };
+export type Lane = "fast" | "slow" | "skip";
+export type SourceInfo = {
+  key: string; kind: "conversation" | "document" | "feed" | "own" | "unknown"; defaultLane: Lane; lane: Lane;
+  laneWhy: "override" | "adaptive" | "default"; override: Lane | null; episodes: number; itemsKept: number; lastSeenAt: string | null;
+};
 export type CaptureHit = { id: number; app: string; window: string; text: string; capturedAt: string };
 
 const KEY = "doggy.session";
@@ -54,5 +59,8 @@ export const api = {
   ask: (question: string) => call<{ answer: string; sources: Item[] }>("/api/ask", { method: "POST", body: JSON.stringify({ question }) }),
   devices: () => call<{ devices: Device[] }>("/api/devices"),
   removeDevice: (id: string) => call(`/api/devices/${id}`, { method: "DELETE" }),
+  sources: () => call<{ sources: SourceInfo[] }>("/api/sources"),
+  setSourceLane: (key: string, lane: Lane | null) =>
+    call<{ source: SourceInfo | null }>(`/api/sources/${encodeURIComponent(key)}`, { method: "PUT", body: JSON.stringify({ lane }) }),
   downloads: () => call<{ mac?: string; windows?: string }>("/api/downloads"),
 };

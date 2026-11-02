@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { api, ApiError, loadSession, saveSession, type CaptureHit, type Device, type Item, type ItemPatch, type ItemType, type Session } from "./api";
+import { api, ApiError, loadSession, saveSession, type CaptureHit, type Device, type Item, type ItemPatch, type ItemType, type Lane, type Session, type SourceInfo } from "./api";
 import { useSpeech } from "./speech";
 
 type Tab = "today" | "ask" | "memory" | "devices";
@@ -378,11 +378,46 @@ function Devices({ llm }: { llm: string }) {
         {downloads.mac && <p className="muted small">Mac: open the .dmg, drag Doggy to Applications, then right-click → Open the first time (the build isn't notarized yet). Grant Accessibility when asked.</p>}
         {downloads.windows && <p className="muted small">Windows: run the .exe; if SmartScreen warns, choose More info → Run anyway. Doggy lives in the system tray.</p>}
       </div>
+      <Sources />
       <div className="group"><h2>Use with Claude / ChatGPT (MCP)</h2>
         <p className="muted small">Endpoint <code>{origin}/mcp</code> with header <code>Authorization: Bearer &lt;device token&gt;</code>. Tools: search_memory, list_open_loops, remember.</p>
       </div>
       <p className="muted small">Extraction engine: {llm || "…"}</p>
     </section>
+  );
+}
+
+const LANE_LABEL: Record<Lane, string> = { fast: "Fast", slow: "Hourly", skip: "Off" };
+
+/** Which apps and sites Doggy reads for tasks, and how soon. */
+function Sources() {
+  const [sources, setSources] = useState<SourceInfo[]>([]);
+  const load = () => api.sources().then((r) => setSources(r.sources)).catch(() => {});
+  useEffect(() => { load(); }, []);
+  if (!sources.length) return null;
+  const set = async (key: string, v: string) => { await api.setSourceLane(key, v === "" ? null : (v as Lane)).catch(() => {}); load(); };
+  return (
+    <div className="group"><h2>Sources</h2>
+      <p className="muted small">Chats are read within a minute, documents and unknown apps about hourly, feeds and this site not at all. Change any of them here.</p>
+      {sources.map((s) => (
+        <div key={s.key} className="device source">
+          <div>
+            <div className="title">{s.key}</div>
+            <div className="meta">
+              <span className="tag">{s.kind}</span>
+              <span>{LANE_LABEL[s.lane]}{s.laneWhy === "adaptive" ? " (nothing found yet)" : ""}</span>
+              <span>{s.itemsKept} kept from {s.episodes} read</span>
+            </div>
+          </div>
+          <select aria-label={`Lane for ${s.key}`} value={s.override ?? ""} onChange={(e) => set(s.key, e.target.value)}>
+            <option value="">Default ({LANE_LABEL[s.defaultLane]})</option>
+            <option value="fast">Fast</option>
+            <option value="slow">Hourly</option>
+            <option value="skip">Off</option>
+          </select>
+        </div>
+      ))}
+    </div>
   );
 }
 

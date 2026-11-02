@@ -1,28 +1,41 @@
-import { db, insertItem, itemKeyTaken, openItems, updateItem, searchItems, type Item } from "./db";
-import { extract, type ExtractInput } from "./llm";
+import {
+  db, insertItem, itemKeyTaken, nearDuplicate, openItems, recentlyDoneItems, updateItem, searchItems, type Item,
+} from "./db";
+import { extract, type ExtractInput, type ExtractSource } from "./llm";
+import { type Source, type SourceKind } from "./sources";
+import { laneFor, recordSourceStats } from "./lanes";
+import { recordUsage } from "./usage";
+import {
+  CAPTURE_RETENTION_DAYS, CaptureStatus, EPISODE_MAX_CHARS, MIN_EPISODE_CHARS, SEEN_LINE_TTL_DAYS, isReady, packEpisodes, type SkipReason,
+} from "./capture";
 
 type UserCtx = { id: string; email: string; name: string | null; tz: string };
 
 const MIN_CONFIDENCE = { capture: 0.6, voice: 0.2, text: 0.2 } as const;
 
-/** Run extraction for one source and persist the results. Shared by notes and screen captures. */
-export async function processSource(
-  user: UserCtx,
-  src: Omit<ExtractInput, "userName" | "userEmail" | "tz" | "existing"> & { sourceId: string },
-): Promise<Item[]> {
-  // Existing open loops: most recent plus anything lexically related, so the model can dedupe/close.
-  const related = searchItems(user.id, src.text.slice(0, 2000), 15).filter((i) => i.status === "open");
+export type SourceInput = Partial<Omit<ExtractSource, "text">> & { text: string; sourceId: string };
+
+/** Run one extraction over one or more sources and persist the results. Returns the new items per source. */
+export async function processSources(user: UserCtx, kind: ExtractInput["kind"], inputs: SourceInput[]): Promise<Item[][]> {
+  const related = inputs.flatMap((s) => searchItems(user.id, s.text.slice(0, 1000), 8)).filter((i) => i.status === "open");
   const existing = [...new Map([...openItems(user.id, 25), ...related].map((i) => [i.id, i])).values()];
+  const sources: ExtractSource[] = inputs.map((s) => ({ app: s.app ?? null, window: s.window ?? null, url: s.url ?? null, text: s.text }));
 
-  const out = await extract({ ...src, userName: user.name, userEmail: user.email, tz: user.tz, existing });
+  const { result: out, usage } = await extract({
+    kind, sources, userName: user.name, userEmail: user.email, tz: user.tz, existing, recentlyDone: recentlyDoneItems(user.id),
+  });
+  recordUsage(user.id, kind, usage);
 
-  const created: Item[] = [];
+  const created: Item[][] = inputs.map(() => []);
   for (const it of out.items) {
-    if (it.confidence < MIN_CONFIDENCE[src.kind]) continue;
+    if (it.confidence < MIN_CONFIDENCE[kind]) continue;
     if (itemKeyTaken(user.id, it.title, it.evidence)) continue;
-    created.push(insertItem(user.id, {
+    // Typed and spoken notes are explicit requests, so only screen text gets the fuzzy guard.
+    if (kind === "capture" && nearDuplicate(user.id, it.title)) continue;
+    const src = inputs[it.source]!;
+    created[it.source]!.push(insertItem(user.id, {
       type: it.type, title: it.title, details: it.details, owner: it.owner, counterparty: it.counterparty,
-      dueAt: validIso(it.due_at), evidence: it.evidence, sourceKind: src.kind, sourceApp: src.app ?? null,
+      dueAt: validIso(it.due_at), evidence: it.evidence, sourceKind: kind, sourceApp: src.app ?? null,
       sourceWindow: src.window ?? null, sourceId: src.sourceId, confidence: it.confidence,
     }));
   }
@@ -33,17 +46,6 @@ export async function processSource(
   return created;
 }
 
-const OWN_HOSTS = new Set(["doggy.ruv.world", "localhost", "127.0.0.1"]);
-
-function ownAppUrl(url: string): boolean {
-  try {
-    const host = new URL(url).hostname.toLowerCase();
-    return OWN_HOSTS.has(host) || host === process.env.DOGGY_PUBLIC_HOST?.toLowerCase();
-  } catch {
-    return false;
-  }
-}
-
 function validIso(s: string | null): string | null {
   if (!s) return null;
   const d = new Date(s);
@@ -51,54 +53,95 @@ function validIso(s: string | null): string | null {
 }
 
 // ---------- background capture worker ----------
-const IDLE_MS = Number(process.env.DOGGY_EPISODE_IDLE_MS ?? 45_000); // window quiet this long => episode done
-const MAX_CHARS = 12_000;
+const PRUNE_EVERY_MS = 60 * 60_000;
+let lastPrune = 0;
 let running = false;
 
-type Group = { user_id: string; device_id: string; app: string; window: string; last: string; chars: number };
+function pruneExpired() {
+  if (Date.now() - lastPrune < PRUNE_EVERY_MS) return;
+  lastPrune = Date.now();
+  const cutoff = new Date(Date.now() - SEEN_LINE_TTL_DAYS * 86_400_000).toISOString();
+  const r = db.query("DELETE FROM seen_lines WHERE seen_at < ?").run(cutoff);
+  if (r.changes) console.log(`[pipeline] pruned ${r.changes} seen lines older than ${SEEN_LINE_TTL_DAYS} days`);
+  const capCutoff = new Date(Date.now() - CAPTURE_RETENTION_DAYS * 86_400_000).toISOString();
+  const gone = db.query("DELETE FROM captures WHERE processed != ? AND captured_at < ? RETURNING id")
+    .all(CaptureStatus.PENDING, capCutoff).length;
+  if (gone) console.log(`[pipeline] deleted ${gone} processed captures older than ${CAPTURE_RETENTION_DAYS} days`);
+}
+
+type Group = {
+  user_id: string; device_id: string; source_key: string; source_kind: SourceKind; window: string;
+  first: string; last: string; chars: number;
+};
+type Episode = { userId: string; source: Source; window: string; app: string; url: string | null; ids: number[]; text: string };
+
+function loadEpisode(g: Group): Episode {
+  const rows = db.query(
+    `SELECT id, app, text, url FROM captures
+     WHERE processed = ? AND user_id = ? AND device_id = ? AND source_key = ? AND window = ? ORDER BY id`,
+  ).all(CaptureStatus.PENDING, g.user_id, g.device_id, g.source_key, g.window) as
+    { id: number; app: string; text: string; url: string | null }[];
+  return {
+    userId: g.user_id, source: { key: g.source_key, kind: g.source_kind }, window: g.window,
+    app: rows.at(-1)?.app ?? "", url: rows.findLast((r) => r.url)?.url ?? null, ids: rows.map((r) => r.id),
+    text: rows.map((r) => r.text).join("\n").slice(-EPISODE_MAX_CHARS),
+  };
+}
+
+function markCaptures(ids: number[], status: number, reason: SkipReason | null = null) {
+  if (!ids.length) return;
+  db.query(`UPDATE captures SET processed = ?, skip_reason = ? WHERE id IN (${ids.map(() => "?").join(",")})`)
+    .run(status, reason, ...ids);
+}
 
 export async function processPendingCaptures() {
   if (running) return;
   running = true;
   try {
+    pruneExpired();
     const groups = db.query(
-      `SELECT user_id, device_id, app, window, MAX(captured_at) AS last, SUM(LENGTH(text)) AS chars
-       FROM captures WHERE processed = 0 GROUP BY user_id, device_id, app, window`,
-    ).all() as Group[];
-    const cutoff = new Date(Date.now() - IDLE_MS).toISOString();
+      `SELECT user_id, device_id, source_key, source_kind, window, MIN(captured_at) AS first, MAX(captured_at) AS last,
+         SUM(LENGTH(text)) AS chars
+       FROM captures WHERE processed = ? GROUP BY user_id, device_id, source_key, window`,
+    ).all(CaptureStatus.PENDING) as Group[];
+    const nowMs = Date.now();
+    const ready = new Map<string, Episode[]>();
     for (const g of groups) {
-      if (g.last > cutoff && g.chars < MAX_CHARS) continue; // still active; wait for more context
-      const rows = db.query(
-        `SELECT id, text, url FROM captures WHERE processed = 0 AND user_id=? AND device_id=? AND app=? AND window=?
-         ORDER BY id`,
-      ).all(g.user_id, g.device_id, g.app, g.window) as { id: number; text: string; url: string | null }[];
-      const ids = rows.map((r) => r.id);
-      const markProcessed = () =>
-        db.query(`UPDATE captures SET processed = 1 WHERE id IN (${ids.map(() => "?").join(",")})`).run(...ids);
-      // The page is our own list. Extracting it saves a second copy of items we already have.
-      const urls = rows.map((r) => r.url).filter((u): u is string => !!u);
-      if (urls.length > 0 && urls.every(ownAppUrl)) {
-        markProcessed();
-        console.log(`[pipeline] skip ${g.app} / ${g.window}: own page`);
+      const { lane, why } = laneFor(g.user_id, { key: g.source_key, kind: g.source_kind });
+      if (!isReady(lane, { firstAt: g.first, lastAt: g.last, chars: g.chars }, nowMs)) continue;
+      const ep = loadEpisode(g);
+      if (lane === "skip") {
+        const reason: SkipReason = why === "override" ? "user_off" : g.source_kind === "own" ? "own" : "feed";
+        markCaptures(ep.ids, CaptureStatus.SKIPPED, reason);
+        recordSourceStats(ep.userId, ep.source, { episodes: 0, chars: 0, itemsKept: 0 });
         continue;
       }
-      const text = rows.map((r) => r.text).join("\n").slice(-MAX_CHARS);
-      const user = db.query("SELECT id, email, name, tz FROM users WHERE id = ?").get(g.user_id) as UserCtx;
-      try {
-        if (text.trim().length >= 20) {
-          const made = await processSource(user, {
-            kind: "capture", text, app: g.app, window: g.window,
-            url: rows.findLast((r) => r.url)?.url ?? null, sourceId: `capture:${ids.at(-1)}`,
-          });
-          if (made.length) console.log(`[pipeline] ${g.app} / ${g.window}: +${made.length} items`);
-        }
-        markProcessed();
-      } catch (e) {
-        console.error(`[pipeline] extraction failed for ${g.app}/${g.window}:`, (e as Error).message);
-        // leave unprocessed; retried next tick
-      }
+      if (ep.text.trim().length < MIN_EPISODE_CHARS) { markCaptures(ep.ids, CaptureStatus.DONE); continue; }
+      ready.set(g.user_id, [...(ready.get(g.user_id) ?? []), ep]);
     }
+    for (const [userId, eps] of ready) await extractForUser(userId, eps);
   } finally {
     running = false;
   }
+}
+
+async function extractForUser(userId: string, eps: Episode[]) {
+  const user = db.query("SELECT id, email, name, tz FROM users WHERE id = ?").get(userId) as UserCtx;
+  const packs = packEpisodes(eps);
+  for (const pack of packs) {
+    try {
+      const created = await processSources(user, "capture", pack.map((ep) => ({
+        app: ep.app, window: ep.window, url: ep.url, text: ep.text, sourceId: `capture:${ep.ids.at(-1)}`,
+      })));
+      pack.forEach((ep, i) => {
+        markCaptures(ep.ids, CaptureStatus.DONE);
+        recordSourceStats(userId, ep.source, { episodes: 1, chars: ep.text.length, itemsKept: created[i]!.length });
+        if (created[i]!.length) console.log(`[pipeline] ${ep.source.key} / ${ep.window}: +${created[i]!.length} items`);
+      });
+    } catch (e) {
+      // Left pending; retried next tick.
+      console.error(`[pipeline] extraction failed for ${pack.length} episode(s):`, (e as Error).message);
+    }
+  }
+  console.log(`[pipeline] user ${userId}: ${eps.length} episode(s) in ${packs.length} call(s)`);
 }

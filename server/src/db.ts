@@ -1,6 +1,8 @@
 import { Database } from "bun:sqlite";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
+import { CaptureStatus } from "./capture";
+import { classify } from "./sources";
 
 const DB_PATH = process.env.DOGGY_DB ?? `${import.meta.dir}/../data/doggy.db`;
 mkdirSync(dirname(DB_PATH), { recursive: true });
@@ -60,6 +62,9 @@ CREATE VIRTUAL TABLE IF NOT EXISTS captures_fts USING fts5(
 CREATE TRIGGER IF NOT EXISTS captures_ai AFTER INSERT ON captures BEGIN
   INSERT INTO captures_fts(rowid, app, window, text) VALUES (new.id, new.app, new.window, new.text);
 END;
+CREATE TRIGGER IF NOT EXISTS captures_ad AFTER DELETE ON captures BEGIN
+  INSERT INTO captures_fts(captures_fts, rowid, app, window, text) VALUES ('delete', old.id, old.app, old.window, old.text);
+END;
 `);
 
 export const now = () => new Date().toISOString();
@@ -75,6 +80,9 @@ export function textKey(s: string | null | undefined): string | null {
 for (const sql of [
   "ALTER TABLE items ADD COLUMN title_key TEXT",
   "ALTER TABLE items ADD COLUMN evidence_key TEXT",
+  "ALTER TABLE captures ADD COLUMN source_key TEXT",
+  "ALTER TABLE captures ADD COLUMN source_kind TEXT",
+  "ALTER TABLE captures ADD COLUMN skip_reason TEXT",
 ]) {
   try { db.exec(sql); } catch (e) {
     if (!/duplicate column/i.test((e as Error).message)) throw e;
@@ -83,7 +91,38 @@ for (const sql of [
 db.exec(`
 CREATE INDEX IF NOT EXISTS items_title_key ON items(user_id, title_key);
 CREATE INDEX IF NOT EXISTS items_evidence_key ON items(user_id, evidence_key);
+CREATE INDEX IF NOT EXISTS captures_pending_source ON captures(processed, user_id, device_id, source_key, window);
+CREATE TABLE IF NOT EXISTS seen_lines (
+  user_id TEXT NOT NULL, scope TEXT NOT NULL, hash TEXT NOT NULL, seen_at TEXT NOT NULL,
+  PRIMARY KEY (user_id, scope, hash)
+) WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS seen_lines_age ON seen_lines(seen_at);
+CREATE TABLE IF NOT EXISTS llm_usage (
+  day TEXT NOT NULL, user_id TEXT NOT NULL, kind TEXT NOT NULL,
+  calls INTEGER NOT NULL DEFAULT 0, input_tokens INTEGER NOT NULL DEFAULT 0, output_tokens INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (day, user_id, kind)
+);
+CREATE TABLE IF NOT EXISTS source_prefs (
+  user_id TEXT NOT NULL, source_key TEXT NOT NULL, lane TEXT NOT NULL, updated_at TEXT NOT NULL,
+  PRIMARY KEY (user_id, source_key)
+);
+CREATE TABLE IF NOT EXISTS source_stats (
+  user_id TEXT NOT NULL, source_key TEXT NOT NULL, kind TEXT NOT NULL,
+  episodes INTEGER NOT NULL DEFAULT 0, calls_chars INTEGER NOT NULL DEFAULT 0,
+  items_kept INTEGER NOT NULL DEFAULT 0, last_seen_at TEXT NOT NULL,
+  PRIMARY KEY (user_id, source_key)
+);
 `);
+{
+  const pending = db.query(
+    "SELECT id, app, bundle_id, url FROM captures WHERE processed = ? AND source_key IS NULL",
+  ).all(CaptureStatus.PENDING) as { id: number; app: string; bundle_id: string | null; url: string | null }[];
+  const fill = db.query("UPDATE captures SET source_key = ?, source_kind = ? WHERE id = ?");
+  for (const r of pending) {
+    const s = classify({ app: r.app, bundleId: r.bundle_id, url: r.url });
+    fill.run(s.key, s.kind, r.id);
+  }
+}
 {
   const pending = db.query(
     "SELECT id, title, evidence FROM items WHERE title_key IS NULL OR (evidence IS NOT NULL AND evidence_key IS NULL)",
@@ -180,9 +219,11 @@ const STOP = new Set(
   "the a an and or of to in on for with what when where who why how did do does i me my we our you your is are was were be been it this that at by from about any have has had should can could will would tell show".split(" "),
 );
 
+const contentWords = (s: string) => (s.toLowerCase().match(/[\p{L}\p{N}]{2,}/gu) ?? []).filter((w) => !STOP.has(w));
+
 /** Turn free text into a safe FTS5 OR-query of prefix terms. */
 export function ftsQuery(q: string): string | null {
-  const words = (q.toLowerCase().match(/[\p{L}\p{N}]{2,}/gu) ?? []).filter((w) => !STOP.has(w));
+  const words = contentWords(q);
   if (!words.length) return null;
   return [...new Set(words)].slice(0, 12).map((w) => `"${w}"*`).join(" OR ");
 }
@@ -207,6 +248,24 @@ export function searchCaptures(userId: string, q: string, limit = 10): CaptureHi
      FROM captures_fts JOIN captures c ON c.id = captures_fts.rowid
      WHERE captures_fts MATCH ? AND c.user_id = ? ORDER BY bm25(captures_fts) LIMIT ?`,
   ).all(fq, userId, limit) as CaptureHit[];
+}
+
+export const NEAR_DUPLICATE_JACCARD = 0.6;
+
+/** True when an open or done item's title shares most of its content words with this title. */
+export function nearDuplicate(userId: string, title: string): boolean {
+  const a = new Set(contentWords(title));
+  if (!a.size) return false;
+  return searchItems(userId, title, 5).some((it) => {
+    const b = new Set(contentWords(it.title));
+    const shared = [...a].filter((w) => b.has(w)).length;
+    return shared / (a.size + b.size - shared) >= NEAR_DUPLICATE_JACCARD;
+  });
+}
+
+export function recentlyDoneItems(userId: string, limit = 15): Item[] {
+  return (db.query("SELECT * FROM items WHERE user_id = ? AND status = 'done' ORDER BY updated_at DESC LIMIT ?")
+    .all(userId, limit) as ItemRow[]).map(toItem);
 }
 
 export function openItems(userId: string, limit = 40): Item[] {
