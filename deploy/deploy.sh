@@ -19,11 +19,11 @@ SNAP="$BACKUP_DIR/pre-deploy-$STAMP.db"
 sudo -u doggy "$BUN" "$APP/server/scripts/backup.ts" "$DB" "$SNAP"
 echo "snapshot $SNAP"
 
-if ! cd "$APP/server" && sudo -u doggy "$BUN" install --frozen-lockfile; then
+if ! (cd "$APP/server" && sudo -u doggy "$BUN" install --frozen-lockfile); then
   echo "server install failed; leaving the running process on $PREV" >&2
   exit 1
 fi
-if ! cd "$APP/web" && sudo -u doggy "$BUN" install --frozen-lockfile && sudo -u doggy "$BUN" run build; then
+if ! (cd "$APP/web" && sudo -u doggy "$BUN" install --frozen-lockfile && sudo -u doggy "$BUN" run build); then
   echo "web build failed; leaving the running process on $PREV" >&2
   exit 1
 fi
