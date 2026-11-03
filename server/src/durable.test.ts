@@ -94,3 +94,36 @@ test("pages come from the server, export matches them, and a snapshot does not d
   expect(shrinkReport(shot.counts, { ...shot.counts, items: 24 })).toEqual(["items 25 -> 24"]);
   expect(shrinkReport(shot.counts, shot.counts)).toEqual([]);
 });
+
+test("MCP filters stored secrets in memory tool responses", async () => {
+  const signup = await app.request("/api/auth/signup", {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ email: "redact@doggy.test", password: "long-enough", deviceName: "test", deviceKind: "web" }),
+  });
+  expect(signup.status).toBe(200);
+  const { token } = await signup.json() as { token: string };
+  const headers = { authorization: `Bearer ${token}`, "content-type": "application/json" };
+  const secret = `ghp_${"a".repeat(36)}`;
+  const created = await app.request("/api/items", {
+    method: "POST", headers,
+    body: JSON.stringify({ type: "task", title: `Alice rotate ${secret}`, evidence: "password: hunter2" }),
+  });
+  expect(created.status).toBe(200);
+  for (const [name, args] of [
+    ["search_memory", { query: "Alice" }], ["list_open_loops", {}],
+    ["remember", { text: `Alice rotate ${secret}` }],
+  ]) {
+    const response = await app.request("/mcp", {
+      method: "POST", headers,
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name, arguments: args } }),
+    });
+    expect(response.status).toBe(200);
+    const body = await response.text();
+    expect(body).not.toContain(secret);
+    expect(body).not.toContain("hunter2");
+    if (name !== "remember") {
+      expect(body).toContain("Alice");
+      expect(body).toContain("[REDACTED]");
+    }
+  }
+});

@@ -1,6 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { z } from "zod";
 import type { Item } from "./db";
+import { redactSensitive } from "./redact";
 
 export const MODEL_FAST = process.env.DOGGY_MODEL_FAST ?? "claude-haiku-5-5";
 export const MODEL = process.env.DOGGY_MODEL ?? "claude-sonnet-5-5";
@@ -120,7 +121,7 @@ export async function extract(input: ExtractInput): Promise<{ result: Extraction
       ? `Sources: ${input.sources.length} screen text episode(s), each tagged with its app, window and url`
       : `Source: the user ${input.kind === "voice" ? "spoke" : "typed"} this note directly to you`,
   ].join("\n");
-  const attr = (v: string | null) => (v ?? "").replace(/["<>\n]/g, " ").slice(0, 300);
+  const attr = (v: string | null) => redactSensitive(v ?? "").replace(/["<>\n]/g, " ").slice(0, 300);
   const inner = (t: string) => t.replace(/<\/?source\b[^>]*>/gi, " ");
   const body = input.sources.map((s, i) =>
     input.kind === "capture"
@@ -145,7 +146,7 @@ export async function extract(input: ExtractInput): Promise<{ result: Extraction
     system: EXTRACT_SYSTEM,
     messages: [{
       role: "user",
-      content: `${header}\n\nExisting open items:\n${existing}\n\nRecently completed (do not recreate):\n${done}\n\n${body}`,
+      content: redactSensitive(`${header}\n\nExisting open items:\n${existing}\n\nRecently completed (do not recreate):\n${done}\n\n${body}`),
     }],
   } as any);
 
@@ -198,7 +199,7 @@ export async function answer(
     return { text: sources.slice(0, 6).map((s) => `• ${s.text.split("\n")[0]}`).join("\n"), usage: NO_USAGE };
   }
   const nowLocal = new Date().toLocaleString("en-US", { timeZone: tz, dateStyle: "full", timeStyle: "short" });
-  const attr = (v: string) => v.replace(/["<>\n]/g, " ").slice(0, 200);
+  const attr = (v: string) => redactSensitive(v).replace(/["<>\n]/g, " ").slice(0, 200);
   const ctx = sources.map((s) => {
     const a = Object.entries(s.attrs).filter(([, v]) => v).map(([k, v]) => ` ${k}="${attr(v!)}"`).join("");
     return `<record${a}>\n${s.text.replace(/<\/?(record|memory)\b[^>]*>/gi, " ")}\n</record>`;
@@ -211,7 +212,7 @@ export async function answer(
     system: ANSWER_SYSTEM,
     messages: [{
       role: "user",
-      content: `Current time: ${nowLocal} (${tz})\n\n<memory>\n${ctx || "(nothing found)"}\n</memory>\n\nQuestion: ${question}`,
+      content: redactSensitive(`Current time: ${nowLocal} (${tz})\n\n<memory>\n${ctx || "(nothing found)"}\n</memory>\n\nQuestion: ${question}`),
     }],
   } as any);
   const usage = usageOf(res);

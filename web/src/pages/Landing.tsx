@@ -79,7 +79,7 @@ export function Landing({ signedIn }: { signedIn: boolean }) {
 
       <section className="privacy-strip">
         <Icon name="shield" size={22} />
-        <p>Password fields and password managers are never read. Pause capture any time. No ads, no trackers. <Link to="/privacy">Read the privacy policy</Link>.</p>
+        <p>Password fields and password managers are never read. The server filters recognized secrets and sensitive IDs before sending text to AI. Pause capture any time. No ads, no trackers. <Link to="/privacy">Read the privacy policy</Link>.</p>
       </section>
 
       <footer className="landing-foot">

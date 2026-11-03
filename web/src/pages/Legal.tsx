@@ -1,5 +1,5 @@
 const CONTACT = "dhruvdabhi101@gmail.com";
-const UPDATED = "2 November 2026";
+const UPDATED = "3 November 2026";
 
 export type LegalPage = "privacy" | "retention";
 
@@ -59,6 +59,11 @@ function Privacy() {
         <li><b>Your browser's speech service.</b> Only if you use voice notes. See <a href="/retention">data retention</a>.</li>
         <li><b>Nobody else.</b> Doggy has no ads, no analytics, no trackers, and does not sell or share your data.</li>
       </ul>
+
+      <h2>Filtering sensitive text before AI</h2>
+      <p>Before sending text to Anthropic, Doggy's server uses pattern matching to replace recognized secrets and highly sensitive identifiers with [REDACTED]. This covers screen text, notes, questions, saved items used as context, and app names, window titles and page addresses included in the request. The same filter runs on memory tool responses sent to assistants you connect through MCP.</p>
+      <p>The filter looks for common API keys and access tokens, labeled passwords and security codes, private key blocks, authentication headers and cookies, URLs containing credentials or labeled tokens, labeled recovery phrases, payment card numbers that pass a checksum, IBANs, and common government ID formats such as SSNs, Aadhaar and PAN. It also filters labeled bank account, routing and passport numbers. Names and email addresses are kept so Doggy can remember who said what.</p>
+      <p>This is a best-effort filter, not a guarantee that every secret or sensitive detail will be detected. Unfamiliar formats, unlabeled passwords, and sensitive information written in ordinary prose can be missed. Filtering happens on the server before AI requests and MCP tool responses; it does not remove the original text from uploads, stored screen text, notes, existing items, or server logs. See <a href="/retention">data retention</a> for how long those are kept.</p>
 
       <h2>Who can see it</h2>
       <p>Only devices signed into your account can read your data. The person who runs the Doggy server has technical access to the database and server logs, and uses it only to keep the service working and to fix problems.</p>

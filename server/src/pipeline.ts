@@ -5,6 +5,7 @@ import { extract, type ExtractInput, type ExtractSource } from "./llm";
 import { type Source, type SourceKind } from "./sources";
 import { laneFor, recordSourceStats } from "./lanes";
 import { recordUsage } from "./usage";
+import { redactSensitive } from "./redact";
 import {
   CAPTURE_RETENTION_DAYS, CaptureStatus, EPISODE_MAX_CHARS, MIN_EPISODE_CHARS, SEEN_LINE_TTL_DAYS, isReady, packEpisodes, type SkipReason,
 } from "./capture";
@@ -40,10 +41,10 @@ export async function processSources(user: UserCtx, kind: ExtractInput["kind"], 
     }));
   }
   // The model's quote must really be in what was read; otherwise text on screen could close anything.
-  const haystack = squash(inputs.map((s) => s.text).join("\n"));
+  const haystack = squash(redactSensitive(inputs.map((s) => s.text).join("\n")));
   for (const c of out.closes) {
     const quote = squash(c.evidence);
-    if (quote.length < 8 || !haystack.includes(quote)) continue;
+    if (quote.replaceAll("[redacted]", "").trim().length < 8 || !haystack.includes(quote)) continue;
     updateItem(user.id, c.item_id, { status: "done" });
     console.log(`[pipeline] closed ${c.item_id}: ${c.evidence.slice(0, 80)}`);
   }

@@ -2,6 +2,7 @@ import type { Context } from "hono";
 import type { AuthEnv } from "./auth";
 import { db, openItems, searchCaptures, searchItems, uid, now, type Item } from "./db";
 import { processSources } from "./pipeline";
+import { redactSensitive } from "./redact";
 
 /**
  * Minimal MCP server (streamable HTTP transport, JSON responses only, stateless).
@@ -37,7 +38,7 @@ export async function handleMcp(c: Context<AuthEnv>) {
 
   const user = c.get("user");
   const ok = (result: unknown) => c.json({ jsonrpc: "2.0", id: msg.id, result });
-  const text = (t: string) => ok({ content: [{ type: "text", text: t }] });
+  const text = (t: string) => ok({ content: [{ type: "text", text: redactSensitive(t) }] });
 
   switch (msg.method) {
     case "initialize":
@@ -73,9 +74,9 @@ export async function handleMcp(c: Context<AuthEnv>) {
         const items = (await processSources(user, "text", [{ text: t, sourceId: `note:${id}` }])).flat();
         return text(`Saved. ${items.length ? "Extracted:\n" + items.map(fmt).join("\n") : ""}`);
       }
-      return c.json({ jsonrpc: "2.0", id: msg.id, error: { code: -32602, message: `Unknown tool ${name}` } });
+      return c.json({ jsonrpc: "2.0", id: msg.id, error: { code: -32602, message: redactSensitive(`Unknown tool ${name}`) } });
     }
     default:
-      return c.json({ jsonrpc: "2.0", id: msg.id, error: { code: -32601, message: `Method not found: ${msg.method}` } });
+      return c.json({ jsonrpc: "2.0", id: msg.id, error: { code: -32601, message: redactSensitive(`Method not found: ${msg.method}`) } });
   }
 }
