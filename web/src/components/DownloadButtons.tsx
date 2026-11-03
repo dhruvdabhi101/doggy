@@ -3,6 +3,7 @@ import { api, type Downloads } from "../lib/api";
 import { fmtDate } from "../lib/format";
 import { detectPlatform, PLATFORM_NAME } from "../lib/platform";
 import { Icon } from "./Icon";
+import { trackDownload } from "../lib/analytics";
 
 const HELP = {
   mac: "Open the .dmg and drag Doggy to Applications. The first time, right-click → Open, then allow Accessibility.",
@@ -22,7 +23,7 @@ export function DownloadButtons({ showHelp = false, large = false, hideWhenEmpty
     <>
       <div className="downloads">
         {keys.map((k) => (
-          <a key={k} className={`${k === mine || (!mine && k === keys[0]) ? "primary" : "secondary"} ${large ? "lg" : ""}`} href={d[k]!.url} download>
+          <a key={k} className={`${k === mine || (!mine && k === keys[0]) ? "primary" : "secondary"} ${large ? "lg" : ""}`} href={d[k]!.url} download onClick={() => trackDownload(k)}>
             <Icon name="download" size={18} /> Download for {PLATFORM_NAME[k]}
           </a>
         ))}

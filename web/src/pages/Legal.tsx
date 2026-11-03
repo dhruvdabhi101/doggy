@@ -57,7 +57,7 @@ function Privacy() {
         <li><b>Doggy's server.</b> Everything above is stored on a single server run by Doggy and reached over HTTPS.</li>
         <li><b>Anthropic.</b> Screen text, notes and questions are sent to Anthropic's Claude API to find items and answer questions. Anthropic processes this under its commercial API terms, which do not use API data to train models.</li>
         <li><b>Your browser's speech service.</b> Only if you use voice notes. See <a href="/retention">data retention</a>.</li>
-        <li><b>PostHog.</b> When configured, your browser asks PostHog which optional features to show. It sends the public project key and a random identifier for that browser tab. PostHog also receives network information such as your IP address and browser type. Doggy does not send your account details, notes, questions, screen text, or sign-in token to PostHog. Analytics, event capture and session recording are not used.</li>
+        <li><b>PostHog.</b> When configured, Doggy uses PostHog for feature choices and usage analytics. Analytics includes page names, browser and device type, downloads, sign-ups, sign-ins, feature usage and result counts. Signed-in activity uses your internal account ID so visits across devices count as one user. While the app is visible and recently used, your browser sends an activity heartbeat to estimate active users. Desktop capture uploads and connected AI tool usage are counted separately. PostHog also receives network information such as your IP address. Doggy does not send your name, email, notes, questions, search text, screen text, window titles, sign-in tokens or URL query parameters to PostHog. Session recording and automatic form or click capture are disabled.</li>
         <li><b>Other uses.</b> Doggy has no ads and does not sell your data.</li>
       </ul>
 
@@ -70,7 +70,7 @@ function Privacy() {
       <p>Only devices signed into your account can read your data. The person who runs the Doggy server has technical access to the database and server logs, and uses it only to keep the service working and to fix problems.</p>
 
       <h2>In your browser and on your computer</h2>
-      <p>The web app keeps your sign-in token and a few display preferences in your browser's local storage. If PostHog is configured, a random identifier in session storage keeps feature choices consistent within a browser tab and is removed when the tab closes. The desktop app keeps its token in a config file in your home folder. The list of lines already sent lives only in memory and is gone when the app quits.</p>
+      <p>The web app keeps your sign-in token and a few display preferences in your browser's local storage. If PostHog is configured, it also keeps analytics identifiers in local storage to recognize returning visits, and a feature-choice identifier in session storage until the tab closes. Signing out resets the analytics identity. The desktop app keeps its token in a config file in your home folder. The list of lines already sent lives only in memory and is gone when the app quits.</p>
 
       <h2>Your choices</h2>
       <ul>
@@ -100,6 +100,7 @@ function Retention() {
             <tr><td>Fingerprints of screen lines already seen</td><td>30 days</td><td>Deleted automatically. A fingerprint is a one-way hash of a line, used only to avoid processing the same text twice. The line can't be read back from it.</td></tr>
             <tr><td>Per-app and per-site activity counts, and your capture settings for each</td><td>Until your account is deleted</td><td>Account deletion. Change a setting under Devices.</td></tr>
             <tr><td>Daily usage totals (number of AI calls and tokens)</td><td>Until your account is deleted</td><td>Account deletion. These hold counts only, no text.</td></tr>
+            <tr><td>PostHog usage events and analytics identifiers</td><td>Events follow the PostHog project's retention settings; browser identifiers stay until reset or site data is cleared</td><td>Sign out to reset browser identity. Account deletion requests include removal of the associated PostHog person and events.</td></tr>
             <tr><td>Device records and tokens</td><td>Until the device is removed</td><td>Remove it under Devices</td></tr>
             <tr><td>Server logs</td><td>7 days</td><td>Automatic. Logs can include app names, window titles and short quotes from found items.</td></tr>
             <tr><td>Text sent to Anthropic</td><td>Set by Anthropic's API data retention policy</td><td>Automatic, by Anthropic</td></tr>

@@ -18,6 +18,7 @@ import { recordUsage, usageReport } from "./usage";
 import { mountOAuth, resourceMetadataUrl } from "./oauth";
 import { rateLimit } from "./ratelimit";
 import { issueDevice } from "./auth";
+import { analytics, postHogOrigin, track } from "./analytics";
 
 export const app = new Hono<AuthEnv>();
 app.use("*", async (c, next) => {
@@ -26,7 +27,8 @@ app.use("*", async (c, next) => {
   c.header("referrer-policy", "strict-origin-when-cross-origin");
   if (c.res.headers.get("content-type")?.startsWith("text/html")) {
     c.header("x-frame-options", "DENY");
-    c.header("content-security-policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; manifest-src 'self'; worker-src 'self'; frame-ancestors 'none'; base-uri 'self'; object-src 'none'; form-action 'self'");
+    const analyticsHosts = new Set(["https://us.i.posthog.com", "https://eu.i.posthog.com", ...(postHogOrigin ? [postHogOrigin] : [])]);
+    c.header("content-security-policy", `default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' ${[...analyticsHosts].join(" ")}; manifest-src 'self'; worker-src 'self'; frame-ancestors 'none'; base-uri 'self'; object-src 'none'; form-action 'self'`);
   }
 });
 // Bearer-token API, no cookies, so a permissive CORS policy does not expose anything.
@@ -48,10 +50,12 @@ app.get("/api/health", (c) => {
 app.use("/api/auth/*", rateLimit("auth", 20, 15 * 60_000));
 app.post("/api/auth/signup", async (c) => {
   const r = await signup(await c.req.json().catch(() => ({})));
+  if (!("error" in r)) track(r.user.id, r.device.kind, { event: "user_signed_up" });
   return "error" in r ? c.json({ error: r.error }, r.status) : c.json(r);
 });
 app.post("/api/auth/login", async (c) => {
   const r = await login(await c.req.json().catch(() => ({})));
+  if (!("error" in r)) track(r.user.id, r.device.kind, { event: "user_logged_in" });
   return "error" in r ? c.json({ error: r.error }, r.status) : c.json(r);
 });
 
@@ -100,6 +104,7 @@ app.get("/api/devices", (c) => {
 });
 app.post("/api/auth/logout", (c) => {
   db.query("DELETE FROM devices WHERE id = ? AND user_id = ?").run(c.get("device").id, c.get("user").id);
+  track(c.get("user").id, c.get("device").kind, { event: "user_logged_out" });
   return c.json({ ok: true });
 });
 
@@ -108,10 +113,12 @@ app.post("/api/devices/mcp-token", async (c) => {
   const b = (await c.req.json().catch(() => ({}))) as { name?: unknown };
   const name = typeof b.name === "string" && b.name.trim() ? b.name.trim().slice(0, 60) : "MCP client";
   const { token, device } = issueDevice(c.get("user").id, name, "mcp");
+  track(c.get("user").id, c.get("device").kind, { event: "mcp_token_created" });
   return c.json({ token, device });
 });
 app.delete("/api/devices/:id", (c) => {
-  db.query("DELETE FROM devices WHERE id = ? AND user_id = ?").run(c.req.param("id"), c.get("user").id);
+  const removed = db.query("DELETE FROM devices WHERE id = ? AND user_id = ?").run(c.req.param("id"), c.get("user").id);
+  if (removed.changes) track(c.get("user").id, c.get("device").kind, { event: "device_removed" });
   return c.json({ ok: true });
 });
 
@@ -153,6 +160,7 @@ app.post("/api/capture", rateLimit("capture", 600, 10 * 60_000, (c) => c.get("de
       accepted++;
     }
   })();
+  if (events.length) track(user.id, device.kind, { event: "capture_batch_received", properties: { accepted_count: accepted, deduped_count: deduped } });
   return c.json({ accepted, deduped });
 });
 
@@ -173,6 +181,7 @@ app.put("/api/sources/:key", async (c) => {
   if ("error" in r) return c.json({ error: r.error }, 400);
   const user = c.get("user");
   setLaneOverride(user.id, key, r.lane);
+  track(user.id, c.get("device").kind, { event: "source_lane_changed", properties: { lane: r.lane } });
   return c.json({ source: listSources(user.id).find((s) => s.key === key) ?? null });
 });
 
@@ -191,9 +200,11 @@ app.post("/api/notes", rateLimit("notes", 120, 10 * 60_000, (c) => c.get("user")
     .run(id, user.id, c.get("device").id, text, source, now());
   try {
     const items = (await processSources(user, source, [{ text, sourceId: `note:${id}` }])).flat();
+    track(user.id, c.get("device").kind, { event: "note_saved", properties: { source, item_count: items.length, extraction_succeeded: true } });
     return c.json({ note: { id }, items });
   } catch (e) {
     console.error("[notes] extraction failed:", (e as Error).message);
+    track(user.id, c.get("device").kind, { event: "note_saved", properties: { source, item_count: 0, extraction_succeeded: false } });
     return c.json({ note: { id }, items: [], warning: "Saved, but extraction failed. It will not be retried yet." });
   }
 });
@@ -279,17 +290,20 @@ app.post("/api/items", async (c) => {
   if ("error" in r) return c.json({ error: r.error }, 400);
   const p = r.patch;
   if (!p.title || !p.type) return c.json({ error: "type and title required" }, 400);
-  return c.json({
-    item: insertItem(c.get("user").id, {
-      type: p.type, title: p.title, details: p.details, owner: p.owner ?? "me", counterparty: p.counterparty,
-      dueAt: p.dueAt, sourceKind: "text", confidence: 1,
-    }),
+  const item = insertItem(c.get("user").id, {
+    type: p.type, title: p.title, details: p.details, owner: p.owner ?? "me", counterparty: p.counterparty,
+    dueAt: p.dueAt, sourceKind: "text", confidence: 1,
   });
+  track(c.get("user").id, c.get("device").kind, { event: "item_created", properties: { item_type: item.type } });
+  return c.json({ item });
 });
 app.patch("/api/items/:id", async (c) => {
   const r = parseItemFields(await c.req.json().catch(() => ({})));
   if ("error" in r) return c.json({ error: r.error }, 400);
   const item = updateItem(c.get("user").id, c.req.param("id"), r.patch);
+  if (item && Object.keys(r.patch).length) track(c.get("user").id, c.get("device").kind, {
+    event: "item_updated", properties: { changed_fields: Object.keys(r.patch), status: r.patch.status, item_type: item.type },
+  });
   return item ? c.json({ item }) : c.json({ error: "Not found" }, 404);
 });
 app.get("/api/items/:id", (c) => {
@@ -307,6 +321,7 @@ app.get("/api/changes", (c) => {
 app.get("/api/export", rateLimit("export", 10, 10 * 60_000, (c) => c.get("user").id), (c) => {
   const rows = db.query("SELECT * FROM items WHERE user_id = ? ORDER BY created_at, id").all(c.get("user").id) as ItemRow[];
   const body = JSON.stringify({ exportedAt: now(), items: rows.map(toItem) });
+  track(c.get("user").id, c.get("device").kind, { event: "items_exported" });
   return c.body(body, 200, {
     "content-type": "application/json; charset=utf-8",
     "content-disposition": 'attachment; filename="doggy-export.json"',
@@ -334,11 +349,14 @@ app.get("/api/search", (c) => {
   const type = c.req.query("type");
   if (type && !ITEM_TYPES.includes(type as typeof ITEM_TYPES[number])) return c.json({ error: "bad type" }, 400);
   const u = c.get("user").id;
+  const itemTotal = countItemHits(u, q, type);
+  const captureTotal = countCaptureHits(u, q);
+  if (q.trim()) track(u, c.get("device").kind, { event: "memory_searched", properties: { item_count: itemTotal, capture_count: captureTotal } });
   return c.json({
     items: searchItems(u, q, page.limit, page.offset, type),
     captures: searchCaptures(u, q, captureLimit, captureOffset),
-    itemTotal: countItemHits(u, q, type),
-    captureTotal: countCaptureHits(u, q),
+    itemTotal,
+    captureTotal,
     limit: page.limit,
     offset: page.offset,
   });
@@ -367,9 +385,11 @@ app.post("/api/ask", rateLimit("ask", 60, 10 * 60_000, (c) => c.get("user").id),
   try {
     const r = await answer(question, user.tz, sources);
     recordUsage(user.id, "ask", r.usage);
+    track(user.id, c.get("device").kind, { event: "question_answered", properties: { source_count: all.length, succeeded: true } });
     return c.json({ answer: r.text, sources: all });
   } catch (e) {
     console.error("[ask] failed:", (e as Error).message);
+    track(user.id, c.get("device").kind, { event: "question_answered", properties: { source_count: all.length, succeeded: false } });
     return c.json({ answer: "I couldn't answer that right now. Here's what matched.", sources: all });
   }
 });
@@ -389,5 +409,11 @@ const port = Number(process.env.PORT ?? 8787);
 if (import.meta.main) {
   setInterval(() => void processPendingCaptures(), 10_000);
   console.log(`doggy server on http://localhost:${port}${hasLLM ? "" : " (no ANTHROPIC_API_KEY: heuristic extraction)"}`);
+  const shutdown = async () => {
+    await analytics?.shutdown(5000).catch(() => {});
+    process.exit(0);
+  };
+  process.once("SIGTERM", shutdown);
+  process.once("SIGINT", shutdown);
 }
 export default { port, hostname: process.env.HOST ?? "0.0.0.0", fetch: app.fetch };

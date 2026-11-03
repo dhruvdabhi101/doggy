@@ -41,6 +41,12 @@ Ask is hidden until PostHog evaluates the boolean flag `ask` to true. Missing co
 
 Copy `web/.env.example` to `web/.env.local`. Add the public Project API key from PostHog project settings as `VITE_POSTHOG_KEY`. Set `VITE_POSTHOG_HOST` to your ingestion host. Never put a personal or secret API key in a `VITE_` variable. The example is tracked; `.env.local` is ignored.
 
-Use the boolean `ask` flag in PostHog with client-side evaluation allowed. Leave it disabled or at 0% rollout until Ask is needed. This integration uses an anonymous identifier for each browser tab, so percentage rollouts apply to tabs rather than Doggy accounts. It uses [PostHog's public flag API](https://posthog.com/docs/api/flags) without analytics, event capture, or session recording.
+Use the boolean `ask` flag in PostHog with client-side evaluation allowed. Leave it disabled or at 0% rollout until Ask is needed. Flag evaluation uses an anonymous identifier for each browser tab, so percentage rollouts apply to tabs rather than Doggy accounts. It uses [PostHog's public flag API](https://posthog.com/docs/api/flags). Usage analytics is configured with the same project, as described below.
 
 Vite reads these settings at build time. Restart `bun run dev` after editing them locally. For production, copy the values to `/srv/doggy/web/.env.local`, keep that file owned by `doggy`, and run `/srv/doggy/deploy/deploy.sh` to rebuild and restart. Changing the PostHog flag takes effect on the next app load without another build.
+
+## Usage analytics
+
+PostHog records explicit page views, active-user heartbeats, downloads, and successful product actions. Set `POSTHOG_KEY` and `POSTHOG_HOST` on the server to the same project as the web variables above. In production, put server variables in `/etc/doggy/doggy.env`. A missing key disables that side's analytics. For a custom ingestion host, set the server host too so the page's security policy permits browser requests.
+
+See [docs/ANALYTICS.md](docs/ANALYTICS.md) for the event catalog, dashboard setup, and the query for users active in the last two minutes. This is an estimate of recent browser activity; background desktop captures are measured separately. Analytics does not include note or screen contents, names, emails, search terms, credentials, or URL query parameters. Session replay and autocapture are disabled.

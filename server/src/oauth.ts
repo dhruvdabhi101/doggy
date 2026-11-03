@@ -2,6 +2,7 @@ import type { Context, Hono } from "hono";
 import { issueDevice, requireAuth, sha256, type AuthEnv } from "./auth";
 import { db, now, uid } from "./db";
 import { rateLimit } from "./ratelimit";
+import { track } from "./analytics";
 
 /**
  * OAuth 2.1 authorization server for MCP clients (Claude, ChatGPT, Cursor, ...).
@@ -131,6 +132,7 @@ export function mountOAuth(app: Hono<AuthEnv>) {
     db.query("INSERT INTO oauth_codes (code_hash, client_id, user_id, redirect_uri, challenge, expires_at) VALUES (?,?,?,?,?,?)")
       .run(sha256(code), client.id, c.get("user").id, redirect, challenge, Date.now() + CODE_TTL_MS);
     back.searchParams.set("code", code);
+    track(c.get("user").id, c.get("device").kind, { event: "ai_connection_approved" });
     return c.json({ redirect: back.toString() });
   });
 

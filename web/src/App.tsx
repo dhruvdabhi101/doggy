@@ -8,6 +8,7 @@ import { AuthPage } from "./pages/Auth";
 import { OAuthConsent } from "./pages/OAuthConsent";
 import { Legal, legalPageFor } from "./pages/Legal";
 import { useAskFlag } from "./hooks/useAskFlag";
+import { identifyUser, startActivityTracking, trackPage } from "./lib/analytics";
 
 const LEGACY_TAB: Record<string, string> = { today: "/app", ask: "/app/ask", memory: "/app/memory", devices: "/app/devices" };
 
@@ -15,12 +16,17 @@ export default function App() {
   const [session, setSession] = useState<Session | null>(loadSession);
   const { path } = useLocation();
   const askEnabled = useAskFlag();
-  const signIn = (s: Session) => { saveSession(s); setSession(s); };
-  const signOut = () => { api.logout().catch(() => {}); saveSession(null); setSession(null); };
+  const signIn = (s: Session) => { identifyUser(s.user.id); saveSession(s); setSession(s); };
+  const signOut = () => { api.logout().catch(() => {}); identifyUser(null); saveSession(null); setSession(null); };
 
   const tab = TABS.find((t) => t.path === path);
   const tabs = TABS.filter((t) => t.key !== "ask" || askEnabled === true);
   const isAuth = path === "/signin" || path === "/signup";
+
+  useEffect(() => { identifyUser(session?.user.id ?? null); trackPage(path); }, [path, session?.user.id]);
+  useEffect(() => {
+    if (session && tab) return startActivityTracking();
+  }, [session?.user.id, !!tab]);
 
   useEffect(() => {
     const legacy = new URLSearchParams(location.search).get("tab");
