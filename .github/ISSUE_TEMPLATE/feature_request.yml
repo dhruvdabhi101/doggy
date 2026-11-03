@@ -1,0 +1,35 @@
+name: Feature request
+description: A change you want in Doggy
+title: ""
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Read docs/PLAN.md first. The request may already be listed there.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What you cannot do today, and who it affects.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposal
+      description: What you want Doggy to do. Note if it would capture more data, send more to the model, or keep data longer.
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Server
+        - Web app
+        - Mac agent
+        - Windows agent
+        - Docs
+        - Not sure
+    validations:
+      required: true

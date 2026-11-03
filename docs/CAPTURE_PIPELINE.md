@@ -100,8 +100,9 @@ users than the cost it saves. Spend is controlled by the gates above and watched
 
 ### Screen text retention
 
-Processed captures (done or skipped) are deleted after `DOGGY_CAPTURE_RETENTION_DAYS` (default 30). The worker runs
-the delete once an hour, together with the fingerprint prune. Pending captures are never deleted. A delete trigger
+The worker deletes capture rows whose `captured_at` is older than `DOGGY_CAPTURE_RETENTION_DAYS` (default 30).
+It runs that delete about once an hour, together with the fingerprint prune. The SQL does not exclude pending rows,
+so a capture that is still unprocessed is deleted once it is that old. A delete trigger
 keeps the capture search index in step.
 
 Items are not affected. Each item keeps its own title and evidence quote, so the exact title and quote checks and

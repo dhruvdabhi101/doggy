@@ -1,0 +1,37 @@
+name: Bug report
+description: Something in Doggy does not work the way the code describes
+title: ""
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. Do not paste screen text, notes, passwords, tokens, or API keys.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what you saw.
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Server
+        - Web app
+        - Mac agent
+        - Windows agent
+        - Docs
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version or commit
+      description: A git commit, or the build date shown on the Devices page.
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Operating system, Bun version, and browser. Say whether an Anthropic key is set (yes or no). Do not paste the key.

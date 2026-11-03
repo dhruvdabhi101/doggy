@@ -29,8 +29,9 @@ voice/text notes, and answer questions.
 - [x] Server (Bun + Hono + SQLite): accounts, per-device tokens, capture intake, notes, items, incremental sync
       (`/api/changes`), search, ask, MCP endpoint. Verified end to end with curl.
 - [x] Extraction pipeline: one shared prompt for screen text, voice, and typed notes. Requires an evidence quote;
-      dedupes against open items; auto-closes loops when the source shows them done. Uses Claude (`claude-opus-5-5`)
-      with server-side refusal fallback; rule-based fallback when no key.
+      dedupes against open items; auto-closes loops when the source shows them done. Screen captures use
+      `DOGGY_MODEL_FAST` (default `claude-haiku-5-5`). Notes and ask use `DOGGY_MODEL` (default `claude-sonnet-5-5`).
+      Models other than Haiku send a server-side refusal fallback. With no API key, a rule-based fallback is used.
 - [x] Episode batching: screen text grouped per (device, app, window), processed after 45s idle or 12k chars.
 - [x] Capture cost gates (2026-11-02): server-side seen-line dedupe per source, source registry with fast/slow/skip
       lanes and per-user overrides (Devices → Sources), batched extraction per user tick, usage

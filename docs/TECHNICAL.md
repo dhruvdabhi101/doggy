@@ -45,8 +45,9 @@ clients ◀── GET /api/changes?since=seq (incremental) / /api/items / /api/s
   the last 30 days. The source is a bundle id or URL host, never a window title. The worker groups pending captures
   into episodes per (user, device, source, window). Each source has a lane: chats are fast (45s of quiet), documents
   and unknown apps are slow (flushed together when the clock hour ends), feeds and our own site are skipped with no call. Ready
-  episodes of one user are packed into one call of up to ~24k chars. Usage is recorded, never capped. Processed
-  screen text is deleted after 30 days. Failed extractions stay pending and are retried on the next tick. Details and tradeoffs are in
+  episodes of one user are packed into one call of up to ~24k chars. Usage is recorded, never capped. Capture rows
+  older than `DOGGY_CAPTURE_RETENTION_DAYS` (default 30), measured by `captured_at`, are deleted about once an hour.
+  That delete does not skip pending rows. Failed extractions stay pending and are retried on the next tick until then. Details and tradeoffs are in
   [CAPTURE_PIPELINE.md](CAPTURE_PIPELINE.md).
 - **No keyword gating.** Whether text reaches the model depends on its source and whether it is new, never on its
   words. The model decides what is a task.
@@ -97,8 +98,8 @@ clients ◀── GET /api/changes?since=seq (incremental) / /api/items / /api/s
   screen. The server drops lines it already stored for that source, so this costs no model call.
 
 ## Known gaps and risks
-- Raw screen text is stored unencrypted on the server (`captures`). Add retention/encryption before real users.
-- No rate limiting, no password reset, no email verification. Device tokens never expire (revoke via Devices tab).
+- Raw screen text is stored unencrypted on the server (`captures`). Rows past the retention window are deleted. The database file is not encrypted.
+- Auth, capture, notes, ask, export, MCP, and OAuth register/token routes have in-memory rate limits. There is no password reset and no email verification. Device tokens do not expire. Remove a device to revoke its token.
 - Dedupe is exact title or quote, a word-overlap check for screen items, and whatever the LLM catches. Reworded
   duplicates can still slip through. Embeddings will fix this.
 - Times: the LLM resolves relative dates in the user's timezone (`users.tz`, set from the browser at signup/login).
@@ -135,8 +136,7 @@ Bun loads `server/.env` on its own. To force the heuristic path, set the key to 
   a big model. Our agents use one generic tree walk; adding per-app parsers for the top apps is on the plan.
 
 ## Production deployment (doggy.ruv.world)
-- **Host:** VPS `187.126.120.197` (Debian 13), **shared with other production apps** (d3crm, hrms, incubyte,
-  d3agency). Don't touch their Caddy blocks, pm2, or Postgres.
+- **Host:** a Debian 13 VPS that also runs other applications. Don't touch their Caddy blocks, pm2, or Postgres.
 - **Layout:** repo clone at `/srv/doggy` (owner `doggy`, a system user with no login). Bun at `/opt/bun/bin/bun`.
   Data at `/var/lib/doggy/doggy.db`. Desktop installers at `/var/lib/doggy/downloads/` (`Doggy-mac.dmg`,
   `Doggy-windows.exe`; uploaded by hand, not in git). Secrets in `/etc/doggy/doggy.env` (root:doggy 640).
@@ -145,8 +145,8 @@ Bun loads `server/.env` on its own. To force the heuristic path, set the key to 
 - **Caddy:** `/etc/caddy/doggy.caddy` (from `deploy/doggy.caddy`), imported at the end of `/etc/caddy/Caddyfile`.
   Backup taken as `/etc/caddy/Caddyfile.before-doggy-<timestamp>`. Always run
   `caddy validate --config /etc/caddy/Caddyfile` before `systemctl reload caddy`.
-- **DNS:** Cloudflare, `A doggy → 187.126.120.197`, DNS only (grey cloud) so Caddy can get its own certificate.
-- **Deploy:** push to `main`, then `ssh root@187.126.120.197 /srv/doggy/deploy/deploy.sh` (git pull, install,
+- **DNS:** Cloudflare, an A record for the public name, DNS only (grey cloud) so Caddy can get its own certificate.
+- **Deploy:** push to `main`, then on the server, as root, run `/srv/doggy/deploy/deploy.sh` (git pull, install,
   build web, restart, health check). First-time setup: `deploy/setup-vps.sh` (needs `unzip`).
 - **Database.** `server/src/migrate.ts` applies numbered steps on startup and records them in `schema_migrations`.
   Steps are additive (`CREATE IF NOT EXISTS`, `ALTER` that ignores a column that already exists). A crash before the
@@ -156,7 +156,7 @@ Bun loads `server/.env` on its own. To force the heuristic path, set the key to 
   `daily-YYYY-MM-DD.db` and keeps 14 of those. These files sit on the same disk as the live database. Copy them
   off the machine if that disk dies. To restore, stop `doggy`, replace `/var/lib/doggy/doggy.db` with the snapshot
   (and remove `doggy.db-wal` and `doggy.db-shm`), then start `doggy`.
-- **Publish desktop builds:** `deploy/publish-apps.sh root@187.126.120.197` from a Mac with Swift and the .NET SDK.
+- **Publish desktop builds:** `deploy/publish-apps.sh <user@host>` from a Mac with Swift and the .NET SDK.
   It builds both apps and swaps each file in place atomically. `/api/downloads` returns each file's URL with its
   modification time as `?v=`, so a new upload is a new URL and no cache serves an old build. The Devices page shows
   the build date of each file.
