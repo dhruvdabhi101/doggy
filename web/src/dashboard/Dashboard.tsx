@@ -21,7 +21,7 @@ export const TABS = [
 ] as const satisfies readonly { key: string; path: string; label: string; short: string; icon: IconName }[];
 export type TabKey = (typeof TABS)[number]["key"];
 
-export function Dashboard({ session, tab, onLogout }: { session: Session; tab: TabKey; onLogout: () => void }) {
+export function Dashboard({ session, tab, tabs, onLogout }: { session: Session; tab: TabKey; tabs: readonly (typeof TABS)[number][]; onLogout: () => void }) {
   const { items, loaded, total, upsert, begin, end } = useItems(onLogout);
   const [toast, setToast] = useState<string | null>(null);
   const [saved, setSaved] = useState(0);
@@ -42,7 +42,7 @@ export function Dashboard({ session, tab, onLogout }: { session: Session; tab: T
       <header className="top">
         <Brand to="/app" />
         <nav className="tabs desktop-only" aria-label="Sections">
-          {TABS.map((t) => (
+          {tabs.map((t) => (
             <Link key={t.key} to={t.path} className={tab === t.key ? "on" : ""} aria-current={tab === t.key ? "page" : undefined}>
               <Icon name={t.icon} size={17} />{t.label}
             </Link>
@@ -68,7 +68,7 @@ export function Dashboard({ session, tab, onLogout }: { session: Session; tab: T
         />
       )}
       <nav className="bottom mobile-only" aria-label="Sections">
-        {TABS.map((t) => (
+        {tabs.map((t) => (
           <Link key={t.key} to={t.path} className={tab === t.key ? "on" : ""} aria-current={tab === t.key ? "page" : undefined}>
             <Icon name={t.icon} size={22} /><span>{t.short}</span>
           </Link>

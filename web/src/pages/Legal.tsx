@@ -57,7 +57,8 @@ function Privacy() {
         <li><b>Doggy's server.</b> Everything above is stored on a single server run by Doggy and reached over HTTPS.</li>
         <li><b>Anthropic.</b> Screen text, notes and questions are sent to Anthropic's Claude API to find items and answer questions. Anthropic processes this under its commercial API terms, which do not use API data to train models.</li>
         <li><b>Your browser's speech service.</b> Only if you use voice notes. See <a href="/retention">data retention</a>.</li>
-        <li><b>Nobody else.</b> Doggy has no ads, no analytics, no trackers, and does not sell or share your data.</li>
+        <li><b>PostHog.</b> When configured, your browser asks PostHog which optional features to show. It sends the public project key and a random identifier for that browser tab. PostHog also receives network information such as your IP address and browser type. Doggy does not send your account details, notes, questions, screen text, or sign-in token to PostHog. Analytics, event capture and session recording are not used.</li>
+        <li><b>Other uses.</b> Doggy has no ads and does not sell your data.</li>
       </ul>
 
       <h2>Filtering sensitive text before AI</h2>
@@ -69,7 +70,7 @@ function Privacy() {
       <p>Only devices signed into your account can read your data. The person who runs the Doggy server has technical access to the database and server logs, and uses it only to keep the service working and to fix problems.</p>
 
       <h2>In your browser and on your computer</h2>
-      <p>The web app keeps your sign-in token and a few display preferences in your browser's local storage. The desktop app keeps its token in a config file in your home folder. The list of lines already sent lives only in memory and is gone when the app quits.</p>
+      <p>The web app keeps your sign-in token and a few display preferences in your browser's local storage. If PostHog is configured, a random identifier in session storage keeps feature choices consistent within a browser tab and is removed when the tab closes. The desktop app keeps its token in a config file in your home folder. The list of lines already sent lives only in memory and is gone when the app quits.</p>
 
       <h2>Your choices</h2>
       <ul>
