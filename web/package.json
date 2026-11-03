@@ -4,6 +4,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "test": "bun test test",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview"
   },

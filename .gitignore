@@ -5,6 +5,8 @@ agents/mac/.build/
 agents/windows/bin/
 agents/windows/obj/
 .env
+.env.local
+.env.*.local
 *.db
 *.db-*
 .DS_Store
