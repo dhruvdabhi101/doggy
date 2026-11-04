@@ -78,7 +78,7 @@ const EXTRACT_SCHEMA = {
   },
 };
 
-const EXTRACT_SYSTEM = `You maintain a personal memory for one person ("the user") so they never forget what they committed to or were asked to do.
+export const EXTRACT_SYSTEM = `You maintain a personal memory for one person ("the user") so they never forget what they committed to or were asked to do.
 
 You receive one or more sources, each wrapped in <source id="N">. A source is either a note the user spoke or typed to you directly (always sent alone), or text read from their screen (a chat, email, doc, calendar, etc.) by an accessibility reader. Screen text is noisy: it contains UI labels, menus, timestamps, and content from other people. Several screen sources in one request are unrelated episodes from different apps or windows. Judge each on its own and do not merge facts across them. Extract only what is worth remembering:
 
@@ -97,7 +97,14 @@ Rules:
 - confidence: 0-1, how sure you are this is a real, current item for this user.
 - source: the id of the source the evidence is quoted from.
 - Do not repeat anything already in the existing open items list or the recently completed list. If the source shows an existing open item is now done (sent, completed, cancelled), add it to closes with a quote.
-- Return empty arrays when there is nothing worth keeping (that is the common case for screen text).`;
+- Return empty arrays when there is nothing worth keeping (that is the common case for screen text).
+
+Leave these out, even when they are true:
+- An action the source shows is already finished, and anything happening this minute. Someone waiting, "I am here", and a link for a call already in progress are not items.
+- A meeting link or dial-in as its own item. A future meeting that has a time is still one event. Put the link in details, not in a second item.
+- A task that belongs to someone other than the user. Omit it. Do not rewrite it as the user's. A commitment someone else owes the user stays, with owner set to that person.
+- A status announcement. A build uploaded, a version released, installer links, and a recap of what just happened are not memories.
+- When the source names the user, that person is the user.`;
 
 export type ExtractSource = { app: string | null; window: string | null; url: string | null; text: string };
 

@@ -14,6 +14,18 @@ type UserCtx = { id: string; email: string; name: string | null; tz: string };
 
 const MIN_CONFIDENCE = { capture: 0.6, voice: 0.2, text: 0.2 } as const;
 
+/** Screen text often uses a first name. "Dhruv" is the user named "Dhruv Dabhi". */
+export function taskOwnedBySomeoneElse(owner: string | null, userName: string | null): boolean {
+  const who = (owner ?? "").trim().toLowerCase();
+  if (!who || who === "me" || who === "user" || who === "i") return false;
+  const name = (userName ?? "").trim().toLowerCase();
+  if (!name) return true;
+  if (who === name) return false;
+  const first = name.split(/\s+/)[0] ?? "";
+  if (first.length > 1 && (who === first || who.startsWith(`${first} `))) return false;
+  return true;
+}
+
 export type SourceInput = Partial<Omit<ExtractSource, "text">> & { text: string; sourceId: string };
 
 /** Run one extraction over one or more sources and persist the results. Returns the new items per source. */
@@ -30,6 +42,7 @@ export async function processSources(user: UserCtx, kind: ExtractInput["kind"], 
   const created: Item[][] = inputs.map(() => []);
   for (const it of out.items) {
     if (it.confidence < MIN_CONFIDENCE[kind]) continue;
+    if (it.type === "task" && taskOwnedBySomeoneElse(it.owner, user.name)) continue;
     if (itemKeyTaken(user.id, it.title, it.evidence)) continue;
     // Typed and spoken notes are explicit requests, so only screen text gets the fuzzy guard.
     if (kind === "capture" && nearDuplicate(user.id, it.title)) continue;
