@@ -13,7 +13,7 @@ decisions, and facts, and every device signed into the same account sees the sam
 ```bash
 # 1. Server (also serves the web app)
 cd server && bun install
-export ANTHROPIC_API_KEY=sk-ant-...      # optional; without it a rule-based fallback is used (much lower accuracy)
+export DEEPSEEK_API_KEY=your-key        # or set in server/.env; without it a rule-based fallback is used (much lower accuracy)
 cd ../web && bun install && bun run build
 cd ../server && bun run start            # http://localhost:8787
 
@@ -29,6 +29,8 @@ cd agents\windows && dotnet publish -c Release -r win-x64 --self-contained false
 doggy-agent.exe login --server http://<server>:8787 --email … --password …
 doggy-agent.exe run
 ```
+
+All extraction and Ask requests use DeepSeek V4.1 Flash (`deepseek-flash`). Production reads `DEEPSEEK_API_KEY` from `/etc/doggy/doggy.env`.
 
 **Phone:** voice input needs HTTPS. Expose the server with a tunnel (`cloudflared tunnel --url http://localhost:8787`)
 or deploy it, open the URL on the phone, sign in with the same account, then use "Add to Home Screen".

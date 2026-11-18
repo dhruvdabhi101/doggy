@@ -51,19 +51,18 @@ clients ◀── GET /api/changes?since=seq (incremental) / /api/items / /api/s
 - **No keyword gating.** Whether text reaches the model depends on its source and whether it is new, never on its
   words. The model decides what is a task.
 - **One extraction prompt** (`llm.ts`) for screen text, voice, and typed notes, so accuracy is tuned in one place.
-  Structured output (`output_config.format` JSON schema) is validated with zod. Each item requires a verbatim
+  A forced `extract_memory` tool call carries the extraction JSON schema; its input is validated with zod. Each item requires a verbatim
   `evidence` quote. Existing open items are passed in so the model doesn't duplicate them and can return `closes`
   (loop closure), plus the 15 most recently done titles so it does not recreate them. Confidence thresholds are in
   `pipeline.ts`: capture 0.6, notes 0.2. Screen items whose title shares 60% of its content words with an open or
   done item are dropped (`nearDuplicate`).
 - **Usage ledger.** `extract()` and `answer()` return the response `usage`. The pipeline and the ask route add it to
   `llm_usage` per UTC day, user and kind (`capture`, `voice`, `text`, `ask`). `llm.ts` has no database access.
-- **Models:** captures → `DOGGY_MODEL_FAST` (Haiku 5.5, effort `low`); notes and ask → `DOGGY_MODEL` (Sonnet 5.5).
-  Rough cost for one heavy user (~300 episodes/day × ~3k tokens in, ~1.5k out): Haiku ≈ $0.30/day; the same load
-  on Opus 5.5 ≈ $12/day. Measure accuracy before moving the capture path to a bigger model.
-- **Refusals:** non-Haiku requests use `betas: ["server-side-fallback-2026-07-01"], fallbacks: "default"` (Haiku 5.5
-  has no server-side fallback). On `refusal` or
-  `max_tokens`, captures are dropped and notes fall back to heuristics.
+- **Model:** all captures, notes and Ask use DeepSeek V4.1 Flash (`deepseek-flash`) with thinking disabled.
+  The existing Anthropic SDK calls DeepSeek's Messages endpoint at `https://api.deepseek.com/anthropic`.
+  Only `DEEPSEEK_API_KEY` is used; legacy Anthropic credentials, base URL and `DOGGY_MODEL*` overrides are ignored.
+- **Refusals:** on `refusal` or `max_tokens`, captures are dropped and notes fall back to heuristics.
+  Missing or invalid extraction tool inputs throw so pending captures remain eligible for retry.
 - **Search:** FTS5 over items (title/details/evidence/people) and captures (app/window/text). `ftsQuery()` turns free
   text into a safe prefix OR-query; never pass raw user input to MATCH.
 - **Ask:** FTS hits + (for time/todo questions) open items + capture snippets → `answer()` with numbered citations.
@@ -73,9 +72,7 @@ clients ◀── GET /api/changes?since=seq (incremental) / /api/items / /api/s
 ## Config (env)
 | Var | Default | Meaning |
 |---|---|---|
-| `ANTHROPIC_API_KEY` | – | Enables Claude extraction; without it, rule-based fallback |
-| `DOGGY_MODEL_FAST` | `claude-haiku-5-5` | Screen-capture extraction (high volume) |
-| `DOGGY_MODEL` | `claude-sonnet-5-5` | Voice/text note extraction and "ask" (low volume) |
+| `DEEPSEEK_API_KEY` | – | Enables DeepSeek V4.1 Flash extraction and Ask; without it, rule-based fallback |
 | `DOGGY_DB` | `server/data/doggy.db` | SQLite path |
 | `DOGGY_EPISODE_IDLE_MS` | `45000` | Fast lane: quiet time before a chat episode is extracted |
 | `DOGGY_SLOW_LANE_MS` | `3600000` | Slow lane: length of the clock-aligned window. All slow episodes a user starts in one window are extracted together when it ends |
@@ -119,8 +116,12 @@ cd server && bun run replay <db-copy>   # old vs new model calls on stored captu
 cd web && bun run build           # typecheck + build into web/dist (the server serves it)
 ```
 Smoke test: sign up via curl, `POST /api/notes`, `GET /api/items` (see the API.md examples).
-Bun loads `server/.env` on its own. To force the heuristic path, set the key to empty (`ANTHROPIC_API_KEY= bun src/index.ts`);
+Bun loads `server/.env` on its own. To force the heuristic path, set the key to empty (`DEEPSEEK_API_KEY= bun src/index.ts`);
 `env -u` is not enough.
+
+Run `cd server && bun scripts/verify-deepseek.ts` to check typed notes, voice notes, screen extraction, Ask and
+billed usage against the live DeepSeek API. It uses synthetic inputs in a temporary database and removes that
+database afterward. It requires `DEEPSEEK_API_KEY` and makes four billable Flash calls.
 
 ## Reference: what minimi does (from inspecting the installed app, v1.0.92)
 - Electron app. **No model names in the client:** all LLM calls go through `backend.projectminimi.com`. Their privacy

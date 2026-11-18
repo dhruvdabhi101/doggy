@@ -408,7 +408,7 @@ if (existsSync(WEB_DIST)) {
 const port = Number(process.env.PORT ?? 8787);
 if (import.meta.main) {
   setInterval(() => void processPendingCaptures(), 10_000);
-  console.log(`doggy server on http://localhost:${port}${hasLLM ? "" : " (no ANTHROPIC_API_KEY: heuristic extraction)"}`);
+  console.log(`doggy server on http://localhost:${port}${hasLLM ? "" : " (no DEEPSEEK_API_KEY: heuristic extraction)"}`);
   const shutdown = async () => {
     await analytics?.shutdown(5000).catch(() => {});
     process.exit(0);

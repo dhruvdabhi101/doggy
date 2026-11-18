@@ -3,14 +3,16 @@ import { z } from "zod";
 import type { Item } from "./db";
 import { redactSensitive } from "./redact";
 
-export const MODEL_FAST = process.env.DOGGY_MODEL_FAST ?? "claude-haiku-5-5";
-export const MODEL = process.env.DOGGY_MODEL ?? "claude-sonnet-5-5";
+export const MODEL = "deepseek-flash";
 
-/** Server-side refusal fallback. Haiku 5.5 has no server-side fallback, so send nothing for it. */
-const fallbackParams = (model: string) =>
-  model.startsWith("claude-haiku") ? {} : { betas: ["server-side-fallback-2026-07-01"], fallbacks: "default" };
-export const hasLLM = Boolean(process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_AUTH_TOKEN);
-const client = hasLLM ? new Anthropic() : null;
+const apiKey = process.env.DEEPSEEK_API_KEY?.trim();
+export const hasLLM = Boolean(apiKey);
+// DeepSeek supports the Messages protocol, so retain the SDK's retries and timeouts.
+const client = apiKey ? new Anthropic({
+  apiKey,
+  authToken: null,
+  baseURL: "https://api.deepseek.com/anthropic",
+}) : null;
 
 export const ITEM_TYPES = ["task", "commitment", "memory", "decision", "event"] as const;
 
@@ -33,7 +35,7 @@ export type Extraction = z.infer<typeof Extracted>;
 /** Billed tokens of one call. Input includes cache writes and reads. Zero on the heuristic path. */
 export type Usage = { inputTokens: number; outputTokens: number };
 const NO_USAGE: Usage = { inputTokens: 0, outputTokens: 0 };
-function usageOf(res: { usage: Anthropic.Beta.BetaUsage }): Usage {
+function usageOf(res: { usage: Anthropic.Usage }): Usage {
   const u = res.usage;
   return {
     inputTokens: (u.input_tokens ?? 0) + (u.cache_creation_input_tokens ?? 0) + (u.cache_read_input_tokens ?? 0),
@@ -76,7 +78,7 @@ const EXTRACT_SCHEMA = {
       },
     },
   },
-};
+} satisfies Anthropic.Tool.InputSchema;
 
 export const EXTRACT_SYSTEM = `You maintain a personal memory for one person ("the user") so they never forget what they committed to or were asked to do.
 
@@ -140,33 +142,28 @@ export async function extract(input: ExtractInput): Promise<{ result: Extraction
     : "(none)";
   const done = input.recentlyDone.length ? input.recentlyDone.map((i) => `- ${i.title}`).join("\n") : "(none)";
 
-  const model = input.kind === "capture" ? MODEL_FAST : MODEL;
-  const res = await client.beta.messages.create({
-    model,
+  const res = await client.messages.create({
+    model: MODEL,
     max_tokens: 8000,
-    ...fallbackParams(model),
-    // Screen text is high volume; direct notes are few and matter more.
-    output_config: {
-      effort: input.kind === "capture" ? "low" : "medium",
-      format: { type: "json_schema", schema: EXTRACT_SCHEMA },
-    },
+    thinking: { type: "disabled" },
+    tools: [{ name: "extract_memory", description: "Record the extracted items and completed loops.", input_schema: EXTRACT_SCHEMA }],
+    tool_choice: { type: "tool", name: "extract_memory" },
     system: EXTRACT_SYSTEM,
     messages: [{
       role: "user",
       content: redactSensitive(`${header}\n\nExisting open items:\n${existing}\n\nRecently completed (do not recreate):\n${done}\n\n${body}`),
     }],
-  } as any);
+  });
 
   const usage = usageOf(res);
   if (res.stop_reason === "refusal" || res.stop_reason === "max_tokens") {
     console.warn(`[llm] extract stopped: ${res.stop_reason}`);
     return { result: input.kind === "capture" ? { items: [], closes: [] } : heuristicExtract(input), usage };
   }
-  const text = res.content.flatMap((b: any) => (b.type === "text" ? [b.text] : [])).join("");
-  const parsed = Extracted.safeParse(JSON.parse(text));
+  const tool = res.content.find((b) => b.type === "tool_use" && b.name === "extract_memory");
+  const parsed = Extracted.safeParse(tool?.type === "tool_use" ? tool.input : undefined);
   if (!parsed.success) {
-    console.warn("[llm] extract schema mismatch", parsed.error.message);
-    return { result: { items: [], closes: [] }, usage };
+    throw new Error("DeepSeek returned an invalid extraction payload");
   }
   const known = new Set(input.existing.map((i) => i.id));
   return {
@@ -211,20 +208,21 @@ export async function answer(
     const a = Object.entries(s.attrs).filter(([, v]) => v).map(([k, v]) => ` ${k}="${attr(v!)}"`).join("");
     return `<record${a}>\n${s.text.replace(/<\/?(record|memory)\b[^>]*>/gi, " ")}\n</record>`;
   }).join("\n");
-  const res = await client.beta.messages.create({
+  const res = await client.messages.create({
     model: MODEL,
     max_tokens: 2000,
-    ...fallbackParams(MODEL),
-    output_config: { effort: "low" },
+    thinking: { type: "disabled" },
     system: ANSWER_SYSTEM,
     messages: [{
       role: "user",
       content: redactSensitive(`Current time: ${nowLocal} (${tz})\n\n<memory>\n${ctx || "(nothing found)"}\n</memory>\n\nQuestion: ${question}`),
     }],
-  } as any);
+  });
   const usage = usageOf(res);
   if (res.stop_reason === "refusal") return { text: "I can only help with what you've saved in Doggy.", usage };
-  return { text: res.content.flatMap((b: any) => (b.type === "text" ? [b.text] : [])).join("").trim(), usage };
+  const text = res.content.flatMap((b) => (b.type === "text" ? [b.text] : [])).join("").trim();
+  if (!text) throw new Error("DeepSeek returned an empty answer");
+  return { text, usage };
 }
 
 // ---------- heuristic fallback (no API key) ----------
